@@ -1,0 +1,9 @@
+Segment	ALL	HRT	AKI	CKD
+Bulk	33	9	5	19
+Glom	26	9	3	14
+PT	25	8	5	12
+TAL	17	9	1	7
+DCT	8	6	0	2
+CD	10	9	0	1
+INT	17	8	0	9
+Ti	24	6	5	13
