@@ -1,9 +1,0 @@
-# Add project dependencies here
-numpy
-pandas
-scikit-learn
-lightgbm
-xgboost
-shap
-jupyter
-matplotlib
