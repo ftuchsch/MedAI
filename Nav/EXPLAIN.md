@@ -19,7 +19,16 @@ With `426` rows and `6,592` proteins, training directly on every protein is nois
 - using all proteins is worse than using a small selected subset
 - the best region is around `85–100` proteins, not thousands
 
-The selection is done with an ANOVA F-score on the training fold only. That keeps evaluation leak-safe.
+The selection is done on the training fold only. That keeps evaluation leak-safe.
+
+For the current best XGBoost branch, I tightened this one step further:
+
+- run the ANOVA ranking on `5` stratified inner subsamples of the training fold
+- count how often each protein lands in the top `90`
+- keep the proteins with the highest selection frequency
+- break ties with the full training-fold ANOVA score
+
+That is still simple, still cheap, and still test-time friendly. It is just a lower-variance way to choose the same top-k panel.
 
 ## Why XGBoost
 
@@ -43,6 +52,18 @@ The ridge logistic model is weaker alone than the best XGBoost on some splits, b
 
 This is exactly the kind of low-complexity blend that is usually worth keeping in a hackathon.
 
+## Why Add A Proteomics-Only Tree Branch
+
+Every earlier branch in the ensemble used the same three clinical covariates. That is efficient, but it also means every model is allowed to lean on the same easy proxy signal, especially `baseline_egfr_23`.
+
+The new extra branch is intentionally constrained:
+
+- same stable top-`90` protein selection as the main XGBoost branch
+- same shallow regularized XGBoost model family
+- no clinical variables at all
+
+This gives the final blend one model that must read proteomic signal directly. On local CV the gain is small, but it is one of the few changes that improved both repeated CV and the official seed-42 check.
+
 ## Why Add PLS LR
 
 PLS is a much better fit for this kind of proteomics problem than a raw wide linear model because it can:
@@ -63,11 +84,12 @@ PLS is actually poor alone on log loss here, but at low weight it adds useful di
 
 The current best local blend is:
 
-- `45%` XGBoost using top `90` proteins + clinical covariates
-- `40%` ridge logistic regression using top `80` proteins + clinical covariates
+- `41%` XGBoost using top `90` proteins + clinical covariates, with stable subsample ANOVA selection
+- `12%` proteomics-only XGBoost using the same stable top `90` proteins
+- `32%` ridge logistic regression using top `80` proteins + clinical covariates
 - `15%` PLS logistic regression using top `260` proteins + clinical covariates, compressed to `14` components
 
-That beat the earlier LDA-based 3-model blend and survived repeated 5-seed checks.
+That beat the earlier LDA-based 3-model blend, beat the simpler `XGB + Ridge + PLS` winner on repeated 5-seed CV, and also improved the official seed-42 CV check.
 
 ## Why The PLS Branch Can Help Even Though It Looks Bad Alone
 
@@ -94,6 +116,10 @@ In practice, that low-weight PLS branch improved repeated-CV log loss enough to 
   - it improved one seed-42 run, but not the repeated-CV average
 - keeping both LDA and PLS in the same final ensemble
   - the cleaner `XGB + Ridge + PLS` blend was better
+- aggressive extra robustness proxies
+  - a clinical-cluster GroupKFold stress test slightly preferred the older raw-XGBoost selector, so I kept that bundle versioned as a rollback option instead of deleting it
+- CatBoost as another tree family
+  - it was easy to install and test, but both standalone and blended CatBoost variants lost quickly, so I did not keep it
 
 ## Why Two Final Outputs
 
@@ -107,4 +133,4 @@ So the repo now saves both:
 - a strong single XGBoost fallback that stays close to the starter interface
 - a better 3-model ensemble bundle that the updated `predict.py` can use automatically
 
-That gives you a safer deployment option without giving up the stronger local result.
+I also started versioning promising bundles under `weights_variants/` so we can test multiple leaderboard contenders without losing the current winner.

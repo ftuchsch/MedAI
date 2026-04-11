@@ -3,21 +3,14 @@
   "components": [
     {
       "name": "Selected XGBoost",
-      "weight": 0.41,
+      "weight": 0.45,
       "artifact_type": "xgboost",
       "feature_file": "feature_cols.json",
       "model_file": "xgboost_model.json"
     },
     {
-      "name": "Selected Proteomics-Only XGBoost",
-      "weight": 0.12,
-      "artifact_type": "xgboost",
-      "feature_file": "protein_only_feature_cols.json",
-      "model_file": "protein_only_xgboost_model.json"
-    },
-    {
       "name": "Selected Ridge LR",
-      "weight": 0.32,
+      "weight": 0.4,
       "artifact_type": "sklearn",
       "feature_file": "ridge_feature_cols.json",
       "model_file": "ridge_model.joblib"

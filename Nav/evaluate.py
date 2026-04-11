@@ -99,6 +99,8 @@ def run_base_model_cv(
             train_df,
             y_train,
             protein_top_k=spec["protein_top_k"],
+            feature_selector=spec.get("feature_selector"),
+            include_clinical=spec.get("include_clinical", True),
         )
         X_train = build_feature_frame(train_df, feature_cols)
         X_val = build_feature_frame(val_df, feature_cols)

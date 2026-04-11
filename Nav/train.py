@@ -15,12 +15,14 @@ import pandas as pd
 from sklearn.metrics import log_loss, roc_auc_score
 
 from model import (
+    BASE_MODEL_SPECS,
     ENSEMBLE_COMPONENTS,
     ENSEMBLE_SPECS,
     RANDOM_SEED,
     SELECTED_LDA_TOP_K,
     SELECTED_PLS_PARAMS,
     SELECTED_PLS_TOP_K,
+    SELECTED_PROTEOMICS_ONLY_XGBOOST_TOP_K,
     SELECTED_RIDGE_TOP_K,
     SELECTED_XGBOOST_TOP_K,
     build_model,
@@ -69,6 +71,15 @@ def parse_args():
         help=f"Number of protein features to keep for ridge LR (default: {SELECTED_RIDGE_TOP_K})",
     )
     p.add_argument(
+        "--protein-only-xgb-top-k",
+        type=int,
+        default=SELECTED_PROTEOMICS_ONLY_XGBOOST_TOP_K,
+        help=(
+            "Number of protein features to keep for proteomics-only XGBoost "
+            f"(default: {SELECTED_PROTEOMICS_ONLY_XGBOOST_TOP_K})"
+        ),
+    )
+    p.add_argument(
         "--lda-top-k",
         type=int,
         default=SELECTED_LDA_TOP_K,
@@ -96,17 +107,50 @@ def main():
     df = load_data(args.data)
     y = get_target(df)
 
-    xgb_feature_cols = select_feature_columns(df, y, protein_top_k=args.xgb_top_k)
-    ridge_feature_cols = select_feature_columns(df, y, protein_top_k=args.ridge_top_k)
-    lda_feature_cols = select_feature_columns(df, y, protein_top_k=args.lda_top_k)
-    pls_feature_cols = select_feature_columns(df, y, protein_top_k=args.pls_top_k)
+    xgb_feature_cols = select_feature_columns(
+        df,
+        y,
+        protein_top_k=args.xgb_top_k,
+        feature_selector=BASE_MODEL_SPECS["Selected XGBoost"]["feature_selector"],
+        include_clinical=BASE_MODEL_SPECS["Selected XGBoost"]["include_clinical"],
+    )
+    protein_only_xgb_feature_cols = select_feature_columns(
+        df,
+        y,
+        protein_top_k=args.protein_only_xgb_top_k,
+        feature_selector=BASE_MODEL_SPECS["Selected Proteomics-Only XGBoost"]["feature_selector"],
+        include_clinical=BASE_MODEL_SPECS["Selected Proteomics-Only XGBoost"]["include_clinical"],
+    )
+    ridge_feature_cols = select_feature_columns(
+        df,
+        y,
+        protein_top_k=args.ridge_top_k,
+        feature_selector=BASE_MODEL_SPECS["Selected Ridge LR"]["feature_selector"],
+        include_clinical=BASE_MODEL_SPECS["Selected Ridge LR"]["include_clinical"],
+    )
+    lda_feature_cols = select_feature_columns(
+        df,
+        y,
+        protein_top_k=args.lda_top_k,
+        feature_selector=BASE_MODEL_SPECS["Selected Shrinkage LDA"]["feature_selector"],
+        include_clinical=BASE_MODEL_SPECS["Selected Shrinkage LDA"]["include_clinical"],
+    )
+    pls_feature_cols = select_feature_columns(
+        df,
+        y,
+        protein_top_k=args.pls_top_k,
+        feature_selector=BASE_MODEL_SPECS["Selected PLS LR"]["feature_selector"],
+        include_clinical=BASE_MODEL_SPECS["Selected PLS LR"]["include_clinical"],
+    )
 
     xgb_model = build_model("selected_xgboost", random_state=args.seed)
+    protein_only_xgb_model = build_model("selected_xgboost", random_state=args.seed)
     ridge_model = build_model("selected_ridge_lr", random_state=args.seed)
     lda_model = build_model("selected_lda", random_state=args.seed)
     pls_model = build_model("selected_pls_lr", random_state=args.seed)
 
     X_xgb = build_feature_frame(df, xgb_feature_cols)
+    X_protein_only_xgb = build_feature_frame(df, protein_only_xgb_feature_cols)
     X_ridge = build_feature_frame(df, ridge_feature_cols)
     X_lda = build_feature_frame(df, lda_feature_cols)
     X_pls = build_feature_frame(df, pls_feature_cols)
@@ -115,6 +159,11 @@ def main():
         f"Training Selected XGBoost on {len(y)} samples with {len(xgb_feature_cols)} features..."
     )
     xgb_model.fit(X_xgb, y)
+    logging.info(
+        "Training Selected Proteomics-Only XGBoost "
+        f"on {len(y)} samples with {len(protein_only_xgb_feature_cols)} features..."
+    )
+    protein_only_xgb_model.fit(X_protein_only_xgb, y)
     logging.info(
         f"Training Selected Ridge LR on {len(y)} samples with {len(ridge_feature_cols)} features..."
     )
@@ -129,12 +178,14 @@ def main():
     pls_model.fit(X_pls, y)
 
     xgb_prob = xgb_model.predict_proba(X_xgb)[:, 1]
+    protein_only_xgb_prob = protein_only_xgb_model.predict_proba(X_protein_only_xgb)[:, 1]
     ridge_prob = ridge_model.predict_proba(X_ridge)[:, 1]
     lda_prob = lda_model.predict_proba(X_lda)[:, 1]
     pls_prob = pls_model.predict_proba(X_pls)[:, 1]
 
     component_probabilities = {
         "Selected XGBoost": xgb_prob,
+        "Selected Proteomics-Only XGBoost": protein_only_xgb_prob,
         "Selected Ridge LR": ridge_prob,
         "Selected Shrinkage LDA": lda_prob,
         "Selected PLS LR": pls_prob,
@@ -147,6 +198,7 @@ def main():
     training_rows = []
     for model_name, y_prob in [
         ("Selected XGBoost", xgb_prob),
+        ("Selected Proteomics-Only XGBoost", protein_only_xgb_prob),
         ("Selected Ridge LR", ridge_prob),
         ("Selected Shrinkage LDA", lda_prob),
         ("Selected PLS LR", pls_prob),
@@ -163,6 +215,7 @@ def main():
     print(f"\n{'=' * 60}")
     print(f"Samples   : {len(y)} (ATI={int(y.sum())}, No ATI={int((y == 0).sum())})")
     print(f"XGB feats : {len(xgb_feature_cols)}")
+    print(f"Prot-XGB feats: {len(protein_only_xgb_feature_cols)}")
     print(f"Ridge feats: {len(ridge_feature_cols)}")
     print(f"LDA feats : {len(lda_feature_cols)}")
     print(f"PLS feats : {len(pls_feature_cols)}")
@@ -178,6 +231,12 @@ def main():
     save_json(out_dir / "feature_cols.json", xgb_feature_cols)
     logging.info(f"Saved model: {xgb_model_path}")
     logging.info(f"Saved features: {out_dir / 'feature_cols.json'}")
+
+    protein_only_xgb_model_path = out_dir / "protein_only_xgboost_model.json"
+    protein_only_xgb_model.save_model(str(protein_only_xgb_model_path))
+    save_json(out_dir / "protein_only_feature_cols.json", protein_only_xgb_feature_cols)
+    logging.info(f"Saved model: {protein_only_xgb_model_path}")
+    logging.info(f"Saved features: {out_dir / 'protein_only_feature_cols.json'}")
 
     if hasattr(xgb_model, "feature_importances_"):
         importance = pd.DataFrame(
@@ -218,9 +277,15 @@ def main():
             "data_path": str(Path(args.data).resolve()),
             "seed": args.seed,
             "xgb_top_k": args.xgb_top_k,
+            "xgb_feature_selector": BASE_MODEL_SPECS["Selected XGBoost"]["feature_selector"],
+            "protein_only_xgb_top_k": args.protein_only_xgb_top_k,
+            "protein_only_xgb_feature_selector": BASE_MODEL_SPECS["Selected Proteomics-Only XGBoost"]["feature_selector"],
             "ridge_top_k": args.ridge_top_k,
+            "ridge_feature_selector": BASE_MODEL_SPECS["Selected Ridge LR"]["feature_selector"],
             "lda_top_k": args.lda_top_k,
+            "lda_feature_selector": BASE_MODEL_SPECS["Selected Shrinkage LDA"]["feature_selector"],
             "pls_top_k": args.pls_top_k,
+            "pls_feature_selector": BASE_MODEL_SPECS["Selected PLS LR"]["feature_selector"],
             "pls_n_components": SELECTED_PLS_PARAMS["n_components"],
             "ensemble_components": ENSEMBLE_COMPONENTS,
             "training_metrics": training_rows,

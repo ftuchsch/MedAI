@@ -2,34 +2,21 @@
   "data_path": "/Users/arnavkulkarni/Developer/medAI-hackathon/MedAI/data/train.csv",
   "seed": 42,
   "xgb_top_k": 90,
-  "xgb_feature_selector": "stable_anova",
-  "protein_only_xgb_top_k": 90,
-  "protein_only_xgb_feature_selector": "stable_anova",
   "ridge_top_k": 80,
-  "ridge_feature_selector": "anova",
   "lda_top_k": 120,
-  "lda_feature_selector": "anova",
   "pls_top_k": 260,
-  "pls_feature_selector": "anova",
   "pls_n_components": 14,
   "ensemble_components": [
     {
       "name": "Selected XGBoost",
-      "weight": 0.41,
+      "weight": 0.45,
       "artifact_type": "xgboost",
       "feature_file": "feature_cols.json",
       "model_file": "xgboost_model.json"
     },
     {
-      "name": "Selected Proteomics-Only XGBoost",
-      "weight": 0.12,
-      "artifact_type": "xgboost",
-      "feature_file": "protein_only_feature_cols.json",
-      "model_file": "protein_only_xgboost_model.json"
-    },
-    {
       "name": "Selected Ridge LR",
-      "weight": 0.32,
+      "weight": 0.4,
       "artifact_type": "sklearn",
       "feature_file": "ridge_feature_cols.json",
       "model_file": "ridge_model.joblib"
@@ -45,13 +32,8 @@
   "training_metrics": [
     {
       "model": "Selected XGBoost",
-      "train_auc": 0.9191814159292034,
-      "train_log_loss": 0.412717167451036
-    },
-    {
-      "model": "Selected Proteomics-Only XGBoost",
-      "train_auc": 0.9195575221238939,
-      "train_log_loss": 0.41233830016530953
+      "train_auc": 0.915929203539823,
+      "train_log_loss": 0.41471961682433045
     },
     {
       "model": "Selected Ridge LR",
@@ -69,9 +51,9 @@
       "train_log_loss": 0.1603434433499371
     },
     {
-      "model": "Selected Ensemble (XGB + ProtXGB + Ridge + PLS)",
-      "train_auc": 0.945641592920354,
-      "train_log_loss": 0.38515872703233983
+      "model": "Selected Ensemble (XGB + Ridge + PLS)",
+      "train_auc": 0.9390044247787611,
+      "train_log_loss": 0.39335318537234926
     }
   ]
 }

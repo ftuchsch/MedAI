@@ -16,11 +16,16 @@ from xgboost import XGBClassifier
 # Clinical features included alongside the SomaScan protein abundances.
 CLINICAL_FEATURES = ["age", "sex", "baseline_egfr_23"]
 
+FEATURE_SELECTOR_ANOVA = "anova"
+FEATURE_SELECTOR_STABLE_ANOVA = "stable_anova"
+
 CV_FOLDS = 5
 RANDOM_SEED = 42
+STABILITY_SELECTION_INNER_SEEDS = [11, 13, 17, 19, 23]
 
 STARTER_XGBOOST_TOP_K = None
 SELECTED_XGBOOST_TOP_K = 90
+SELECTED_PROTEOMICS_ONLY_XGBOOST_TOP_K = 90
 SELECTED_RIDGE_TOP_K = 80
 SELECTED_LDA_TOP_K = 120
 SELECTED_PLS_TOP_K = 260
@@ -67,14 +72,21 @@ SELECTED_PLS_PARAMS = {
 ENSEMBLE_COMPONENTS = [
     {
         "name": "Selected XGBoost",
-        "weight": 0.45,
+        "weight": 0.41,
         "artifact_type": "xgboost",
         "feature_file": "feature_cols.json",
         "model_file": "xgboost_model.json",
     },
     {
+        "name": "Selected Proteomics-Only XGBoost",
+        "weight": 0.12,
+        "artifact_type": "xgboost",
+        "feature_file": "protein_only_feature_cols.json",
+        "model_file": "protein_only_xgboost_model.json",
+    },
+    {
         "name": "Selected Ridge LR",
-        "weight": 0.40,
+        "weight": 0.32,
         "artifact_type": "sklearn",
         "feature_file": "ridge_feature_cols.json",
         "model_file": "ridge_model.joblib",
@@ -92,35 +104,53 @@ BASE_MODEL_SPECS = {
     "Starter XGBoost": {
         "builder": "starter_xgboost",
         "protein_top_k": STARTER_XGBOOST_TOP_K,
+        "feature_selector": FEATURE_SELECTOR_ANOVA,
+        "include_clinical": True,
         "artifact_type": "xgboost",
     },
     "Selected XGBoost": {
         "builder": "selected_xgboost",
         "protein_top_k": SELECTED_XGBOOST_TOP_K,
+        "feature_selector": FEATURE_SELECTOR_STABLE_ANOVA,
+        "include_clinical": True,
+        "artifact_type": "xgboost",
+    },
+    "Selected Proteomics-Only XGBoost": {
+        "builder": "selected_xgboost",
+        "protein_top_k": SELECTED_PROTEOMICS_ONLY_XGBOOST_TOP_K,
+        "feature_selector": FEATURE_SELECTOR_STABLE_ANOVA,
+        "include_clinical": False,
         "artifact_type": "xgboost",
     },
     "Selected Ridge LR": {
         "builder": "selected_ridge_lr",
         "protein_top_k": SELECTED_RIDGE_TOP_K,
+        "feature_selector": FEATURE_SELECTOR_ANOVA,
+        "include_clinical": True,
         "artifact_type": "sklearn",
     },
     "Selected Shrinkage LDA": {
         "builder": "selected_lda",
         "protein_top_k": SELECTED_LDA_TOP_K,
+        "feature_selector": FEATURE_SELECTOR_ANOVA,
+        "include_clinical": True,
         "artifact_type": "sklearn",
     },
     "Selected PLS LR": {
         "builder": "selected_pls_lr",
         "protein_top_k": SELECTED_PLS_TOP_K,
+        "feature_selector": FEATURE_SELECTOR_ANOVA,
+        "include_clinical": True,
         "artifact_type": "sklearn",
     },
 }
 
 ENSEMBLE_SPECS = {
-    "Selected Ensemble (XGB + Ridge + PLS)": {
+    "Selected Ensemble (XGB + ProtXGB + Ridge + PLS)": {
         "components": [
-            {"name": "Selected XGBoost", "weight": 0.45},
-            {"name": "Selected Ridge LR", "weight": 0.40},
+            {"name": "Selected XGBoost", "weight": 0.41},
+            {"name": "Selected Proteomics-Only XGBoost", "weight": 0.12},
+            {"name": "Selected Ridge LR", "weight": 0.32},
             {"name": "Selected PLS LR", "weight": 0.15},
         ],
     }
