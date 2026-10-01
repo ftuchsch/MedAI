@@ -12,17 +12,13 @@ from sklearn.feature_selection import f_classif
 
 from model import CLINICAL_FEATURES
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(message)s",
-    datefmt="%H:%M:%S",
-)
+logger = logging.getLogger(__name__)
 
 
 def load_data(data_path: str) -> pd.DataFrame:
-    logging.info(f"Loading data from {data_path}...")
+    logger.info(f"Loading data from {data_path}...")
     df = pd.read_csv(data_path, low_memory=False, na_values=[".", ""])
-    logging.info(f"  {len(df)} samples, {len(df.columns)} columns")
+    logger.info(f"  {len(df)} samples, {len(df.columns)} columns")
     return df
 
 
@@ -30,9 +26,7 @@ def get_target(df: pd.DataFrame) -> np.ndarray:
     if "ati" not in df.columns:
         raise KeyError("Expected target column 'ati' to be present.")
     y = df["ati"].astype(int).to_numpy()
-    logging.info(
-        f"Samples: {len(y)} | No ATI: {(y == 0).sum()} | ATI: {(y == 1).sum()}"
-    )
+    logger.info(f"Samples: {len(y)} | No ATI: {(y == 0).sum()} | ATI: {(y == 1).sum()}")
     return y
 
 
@@ -71,7 +65,7 @@ def select_feature_columns(
 def build_feature_frame(df: pd.DataFrame, feature_cols: list[str]) -> pd.DataFrame:
     missing = [c for c in feature_cols if c not in df.columns]
     if missing:
-        logging.warning(
+        logger.warning(
             f"{len(missing)} expected feature columns missing from input. "
             f"Filled with NaN. First few: {missing[:5]}"
         )
@@ -87,7 +81,7 @@ def build_features_and_labels(
     if feature_cols is None:
         feature_cols = select_feature_columns(df, y, protein_top_k=protein_top_k)
     X = build_feature_frame(df, feature_cols).to_numpy()
-    logging.info(
+    logger.info(
         f"Features: {sum(c.startswith('feature_') for c in feature_cols)} protein"
         f" + {sum(not c.startswith('feature_') for c in feature_cols)} clinical"
         f" = {len(feature_cols)} total"

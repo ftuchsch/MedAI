@@ -1,166 +1,85 @@
-# Boston Kidney Biopsy Cohort — Hackathon Starter Code
+# ATI Modeling Experiments — Boosting and Linear Ensembles
 
-## Task
+This track compares selected-feature XGBoost with ridge logistic regression,
+shrinkage linear discriminant analysis (LDA), and partial least squares (PLS)
+followed by logistic regression. See the [project README](../README.md) for
+the task, dataset, recorded results, and validation limitations.
 
-Predict **acute tubular injury (ATI)** from plasma proteomics, as a binary classification problem:
+## Setup
 
-| Label | Meaning |
-|-------|---------|
-| **0** | No ATI |
-| **1** | ATI present |
-
-Your model will be evaluated on an **external held-out test cohort** (KPMP) using **log loss**. Your goal is to build a model that generalises beyond the BKBC training data.
-
----
-
-## Data
-
-Training data is located at:
-
-```
-/projectnb/medaihack/BKBC-hackathon/BKBC_train/train.csv
-```
-
-It contains **426 patients** (one row each) with the following columns:
-
-| Column group | Description |
-|---|---|
-| `sample_id` | Anonymised patient identifier |
-| `ati` | Binary ATI label (0 = No ATI, 1 = ATI) — your prediction target |
-| `age` | Age (10-year bin midpoint) |
-| `sex` | Sex (1 = Male, 2 = Female) |
-| `baseline_egfr_23` | Baseline eGFR (ml/min/1.73 m²) |
-| `feature_XXXX` × 6,592 | Log₂-normalised, ComBat-corrected SomaScan plasma protein abundances |
-
-All protein features have been **batch-corrected** using reference ComBat so they are directly comparable across the training and test cohorts.
-
----
-
-## Environment Setup
-
-One person per team should be responsible for creating and managing the team's virtual environment.
-
-**First-time setup:**
+From the repository root, use Python 3.12 and an activated virtual environment:
 
 ```bash
-module load medaihack/spring-2026
-module load python3/3.12.4
-
-# Within your directory activate the following commands
-virtualenv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -r Nav/requirements.txt
 ```
 
-**Activating the environment in subsequent sessions:**
+`requirements-local.txt` remains a compatibility alias to the same dependencies.
+Default data and artifact paths resolve relative to the scripts.
 
-- **Jupyter or Code Server (OnDemand):** Load both modules and place the `source` command in the pre-launch dialog box.
-- **Batch scripts:** Include all three commands:
+## Models
+
+| CLI model name | Protein panel | Approach |
+| --- | ---: | --- |
+| `Starter XGBoost` | All proteins | Original boosted-tree baseline |
+| `Selected XGBoost` | Top 90 | Shallow regularized boosted trees |
+| `Selected Ridge LR` | Top 80 | Scaled, L2-regularized logistic regression |
+| `Selected Shrinkage LDA` | Top 120 | LDA with covariance shrinkage |
+| `Selected PLS LR` | Top 260 | 14 supervised latent components + logistic regression |
+
+All branches retain available clinical covariates. Protein selection occurs
+inside each training fold. Parameters and feature counts live in `model.py`.
+Repeated stratified CV produces OOF predictions for comparing individual models
+and cross-fitted convex blends. OOF log loss selects the final recipe.
+
+## Evaluate, train, predict
+
+Run from the repository root:
 
 ```bash
-module load medaihack/spring-2026
-module load python3/3.12.4
-source .venv/bin/activate
+python Nav/evaluate.py --data data/train.csv --out Nav/results/current
+python Nav/train.py --data data/train.csv \
+  --recipe Nav/results/current/final_recipe.json --out Nav/weights
+python Nav/predict.py --data /path/to/new_samples.csv \
+  --model-dir Nav/weights --out predictions_nav.csv
 ```
 
-**Verify your setup:**
+Evaluation defaults to five folds and three repeats. `--models` accepts quoted
+model names; `--blend-models` controls eligibility for blending.
+`--xgb-model-seeds` enables seed averaging. For a shorter run:
 
 ```bash
-python model.py
+python Nav/evaluate.py --data data/train.csv --out Nav/results/quick \
+  --folds 3 --repeats 1 --xgb-n-jobs 1 \
+  --models "Selected XGBoost" "Selected Ridge LR"
 ```
 
----
+Evaluation saves `cv_results.csv`, `base_model_summary.csv`, OOF tables,
+`ensemble_summary.csv`, and `final_recipe.json`. Training saves the required
+models, feature lists, `ensemble_config.json`, and a training summary.
+Selected XGBoost is always retained for starter-interface compatibility.
 
-## Pipeline
-
-```
-/projectnb/medaihack/BKBC-hackathon/BKBC_train/train.csv
-       │
-       ├──→ evaluate.py    (iterate: k-fold CV on training data)
-       │        └── results/cv_results.csv, confusion matrices
-       │
-       ├──→ train.py        (final: train on ALL data, save weights)
-       │        └── weights/xgboost_model.json, feature_cols.json
-       │
-       └──→ predict.sh      (inference: predict on new samples)
-                └── predictions.csv
-```
-
----
-
-## Step 1 — Evaluate with cross-validation
-
-Use this to iterate on your model. It runs stratified k-fold CV on the training data and reports AUC and log loss per fold.
+When a recipe is absent, training uses the historical fixed XGBoost/ridge/PLS
+blend (0.45 / 0.40 / 0.15) and logs the fallback. Inference loads
+`ensemble_config.json` when present, otherwise the single XGBoost artifact
+in `--model-dir`.
 
 ```bash
-python evaluate.py --data /projectnb/medaihack/BKBC-hackathon/BKBC_train/train.csv
+bash Nav/predict.sh /path/to/new_samples.csv predictions_nav.csv
+python Nav/evaluate.py --help
+python Nav/train.py --help
+python Nav/predict.py --help
 ```
 
-**Output:**
-- Per-fold metrics (AUC, log loss)
-- Confusion matrix plots
-- Summary table comparing XGBoost and Lasso LR
+The wrapper uses the caller's active environment; `MEDAI_PYTHON` can override
+the interpreter. Output includes `sample_id`, `prob_ati`, and `pred_label`,
+component probabilities for ensembles, and `true_label` for labeled inputs.
 
----
+## Experiment history
 
-## Step 2 — Train final model
+- [FINDINGS.md](FINDINGS.md): historical search results and unsuccessful approaches.
+- [EXPLAIN.md](EXPLAIN.md): rationale for compact panels and complementary models.
+- [research-summary.md](research-summary.md): background from challenge research.
+- [results/selected_models/](results/selected_models/): saved five-fold comparison.
 
-Once you are happy with your model, train on ALL the training data and save weights:
-
-```bash
-python train.py --data /projectnb/medaihack/BKBC-hackathon/BKBC_train/train.csv
-```
-
-This saves `weights/xgboost_model.json` and `weights/feature_cols.json`.
-
----
-
-## Step 3 — Predict on new data
-
-```bash
-bash predict.sh /path/to/new_data.csv
-# or with custom output path:
-bash predict.sh /path/to/new_data.csv my_predictions.csv
-
-# for the sake of example, evaluate on the training set
-bash predict.sh /projectnb/medaihack/BKBC-hackathon/BKBC_train/train.csv
-```
-
-If the input file contains an `ati` column, evaluation metrics are printed automatically.
-
-**Output columns:**
-
-| Column | Description |
-|--------|-------------|
-| `sample_id` | Patient identifier |
-| `prob_ati` | Predicted probability of ATI (0–1) |
-| `pred_label` | Hard prediction: 0 = No ATI, 1 = ATI |
-| `true_label` | Ground truth (only if `ati` column is present) |
-
----
-
-## File Structure
-
-```
-BKBC/
-├── predict.sh         ← bash wrapper for prediction
-├── predict.py         ← inference on new data
-├── train.py           ← train model, save weights
-├── evaluate.py        ← k-fold cross-validation
-├── model.py           ← model definitions and constants
-├── preprocess.py      ← data loading helpers
-├── requirements.txt   ← Python dependencies
-├── README.md          ← this file
-└── weights/           ← pre-trained model (ready to use)
-    ├── xgboost_model.json
-    └── feature_cols.json
-```
-
----
-## Getting Help
-
-```bash
-python train.py    --help
-python evaluate.py --help
-python predict.py  --help
-```
+These records predate the current recipe-driven evaluator. Re-run evaluation to
+assess changes; archived metrics do not guarantee performance on new cohorts.

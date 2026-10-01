@@ -1,35 +1,22 @@
 #!/usr/bin/env python3
 """
-predict.py — Run a trained model on new / external data
-=========================================================
-Loads the XGBoost model saved by train.py and generates predictions
-for any new dataset that shares the same feature schema.
-
-Column order in the input file does not matter — alignment to the training
-feature list is handled automatically.  Missing columns are filled with NaN
-(XGBoost handles them natively via its built-in missing-value support).
-
-USAGE
------
-    python predict.py --data /path/to/new_data.csv
-    python predict.py --data /path/to/new_data.csv --out predictions.csv
-
-OUTPUT COLUMNS
---------------
-    sample_id   — sample_id if present in input, otherwise row index
-    prob_ati    — predicted probability of ATI (0–1)
-    pred_label  — hard prediction: 0 = No ATI, 1 = ATI  (threshold 0.5)
-    true_label  — ground-truth (0/1) if an 'ati' column is present; else omitted
+predict.py — Run the trained TabPFN kidney model on new data
+============================================================
 """
+
+from __future__ import annotations
 
 import argparse
 import json
 import logging
 from pathlib import Path
 
+import joblib
 import numpy as np
 import pandas as pd
-from xgboost import XGBClassifier
+
+from model import FEATURES_FILENAME, METADATA_FILENAME, MODEL_FILENAME
+from preprocess import build_feature_frame
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,14 +24,13 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
-_SCRIPT_DIR    = Path(__file__).resolve().parent
-_MODEL_PATH    = _SCRIPT_DIR / "weights" / "xgboost_model.json"
-_FEATURES_PATH = _SCRIPT_DIR / "weights" / "feature_cols.json"
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_DEFAULT_MODEL_DIR = _SCRIPT_DIR / "weights"
 
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="Run a trained XGBoost ATI model on new proteomics data."
+        description="Run the trained TabPFN ATI model on new proteomics data."
     )
     p.add_argument(
         "--data",
@@ -56,58 +42,72 @@ def parse_args():
         default="predictions.csv",
         help="Output CSV path (default: predictions.csv)",
     )
+    p.add_argument(
+        "--model-dir",
+        default=str(_DEFAULT_MODEL_DIR),
+        help="Directory containing the trained TabPFN bundle (default: ./weights/)",
+    )
     return p.parse_args()
 
 
-def load_model(model_path: str, features_path: str):
-    """
-    Restore a trained XGBoost model and its feature column list from disk.
-    """
-    logging.info(f"Loading model        : {model_path}")
-    model = XGBClassifier()
-    model.load_model(model_path)
+def load_bundle(model_dir: str):
+    """Restore the trained TabPFN bundle from disk."""
+    bundle_dir = Path(model_dir)
+    model_path = bundle_dir / MODEL_FILENAME
+    features_path = bundle_dir / FEATURES_FILENAME
+    metadata_path = bundle_dir / METADATA_FILENAME
 
-    logging.info(f"Loading feature list : {features_path}")
-    with open(features_path) as f:
+    logging.info(f"Loading model bundle : {bundle_dir}")
+    if not model_path.exists():
+        raise FileNotFoundError(f"Missing model artifact: {model_path}")
+    if not features_path.exists():
+        raise FileNotFoundError(f"Missing feature list: {features_path}")
+
+    metadata = {}
+    if metadata_path.exists():
+        with metadata_path.open() as f:
+            metadata = json.load(f)
+
+    model = joblib.load(model_path)
+    with features_path.open() as f:
         feature_cols = json.load(f)
 
     logging.info(f"Model expects {len(feature_cols)} features")
-    return model, feature_cols
-
-
-def prepare_features(df: pd.DataFrame, feature_cols: list):
-    """
-    Align a new DataFrame to the feature columns expected by the model.
-
-    Returns
-    -------
-    X   : np.ndarray  (n_samples, n_features)
-    ids : pd.Series   sample identifiers
-    """
-    missing = [c for c in feature_cols if c not in df.columns]
-    if missing:
-        logging.warning(
-            f"{len(missing)} feature columns absent from input — filled with NaN. "
-            f"First few: {missing[:5]}"
+    if metadata:
+        logging.info(
+            f"Loaded {metadata.get('model_name', 'model')} "
+            f"(TabPFN v{metadata.get('tabpfn_version', 'unknown')})"
         )
 
-    X   = df.reindex(columns=feature_cols).values.astype(float)
+    return model, feature_cols, metadata
+
+
+def prepare_features(df: pd.DataFrame, feature_cols: list[str]):
+    """Align a new DataFrame to the feature columns expected by the model."""
+    X = build_feature_frame(df, feature_cols).to_numpy()
     ids = df["sample_id"] if "sample_id" in df.columns else pd.RangeIndex(len(df))
     return X, ids
 
 
 def run_predict(model, X: np.ndarray, ids, y_true=None) -> pd.DataFrame:
-    """
-    Generate ATI predictions for a feature matrix.
-    """
+    """Generate ATI predictions for a feature matrix."""
     y_prob = model.predict_proba(X)[:, 1]
+    probability_shrinkage = float(getattr(model, "_kidney_probability_shrinkage", 0.0))
+    train_prevalence = getattr(model, "_kidney_train_prevalence", None)
+    if probability_shrinkage > 0 and train_prevalence is not None:
+        y_prob = (1.0 - probability_shrinkage) * y_prob + probability_shrinkage * float(
+            train_prevalence
+        )
+    y_prob = np.clip(y_prob, 1e-6, 1 - 1e-6)
     y_pred = (y_prob >= 0.5).astype(int)
 
-    out = pd.DataFrame({
-        "sample_id" : ids,
-        "prob_ati"  : y_prob,
-        "pred_label": y_pred,
-    })
+    out = pd.DataFrame(
+        {
+            "sample_id": ids,
+            "prob_ati": y_prob,
+            "pred_label": y_pred,
+        }
+    )
     if y_true is not None:
         out["true_label"] = np.asarray(y_true)
     return out
@@ -115,15 +115,17 @@ def run_predict(model, X: np.ndarray, ids, y_true=None) -> pd.DataFrame:
 
 def evaluate(results: pd.DataFrame):
     """Print classification metrics when ground-truth labels are available."""
-    from sklearn.metrics import classification_report, roc_auc_score, log_loss
+    from sklearn.metrics import classification_report, log_loss, roc_auc_score
 
     y_true = results["true_label"].values
     y_pred = results["pred_label"].values
     y_prob = results["prob_ati"].values
 
     print(f"\n{'=' * 50}")
-    print(f"  Samples : {len(results)}  |  "
-          f"No ATI: {(y_true==0).sum()}  |  ATI: {(y_true==1).sum()}")
+    print(
+        f"  Samples : {len(results)}  |  "
+        f"No ATI: {(y_true == 0).sum()}  |  ATI: {(y_true == 1).sum()}"
+    )
     print(f"{'=' * 50}")
 
     if len(np.unique(y_true)) > 1:
@@ -137,7 +139,7 @@ def evaluate(results: pd.DataFrame):
 def main():
     args = parse_args()
 
-    model, feature_cols = load_model(str(_MODEL_PATH), str(_FEATURES_PATH))
+    model, feature_cols, _ = load_bundle(args.model_dir)
 
     logging.info(f"Loading data from {args.data}...")
     df = pd.read_csv(args.data, low_memory=False, na_values=[".", ""])
@@ -145,7 +147,6 @@ def main():
 
     X, ids = prepare_features(df, feature_cols)
 
-    # Extract ground-truth labels if available
     y_true = None
     if "ati" in df.columns:
         y_true = df["ati"].astype(int).values
@@ -156,7 +157,9 @@ def main():
     if y_true is not None:
         evaluate(results)
 
-    results.to_csv(args.out, index=False)
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    results.to_csv(out_path, index=False)
     logging.info(f"Predictions saved to: {args.out}")
 
 

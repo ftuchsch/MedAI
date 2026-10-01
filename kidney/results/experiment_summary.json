@@ -1,0 +1,156 @@
+{
+  "data_path": "/Users/felixtuchscherer/Desktop/MedAI/data/train.csv",
+  "n_samples": 426,
+  "n_features_total": 6595,
+  "n_folds": 5,
+  "n_repeats": 1,
+  "label_counts": {
+    "no_ati": 226,
+    "ati": 200
+  },
+  "final_recipe": {
+    "recipe_type": "single_model",
+    "candidate_name": "xgb_fs1",
+    "base_model_names": [
+      "xgb_fs1"
+    ],
+    "selection_metric": "oof_log_loss",
+    "candidate_oof_log_loss": 0.5725029004608351,
+    "candidate_oof_roc_auc": 0.7681637168141593,
+    "recommended_n_estimators": {
+      "xgb_fs1": 228,
+      "xgb_fs2": 208,
+      "xgb_fs3": 126
+    }
+  },
+  "base_models_ranked": [
+    {
+      "model_name": "xgb_fs1",
+      "model_family": "xgb",
+      "role": "base",
+      "feature_set": "fs1_all",
+      "n_seeds": 3,
+      "mean_fold_log_loss": 0.5726308885629499,
+      "std_fold_log_loss": 0.045239391940042895,
+      "mean_fold_roc_auc": 0.7638792270531402,
+      "std_fold_roc_auc": 0.060963318738817704,
+      "median_feature_count": 6595,
+      "recommended_n_estimators": 228.0,
+      "oof_log_loss": 0.5725029004608351,
+      "oof_roc_auc": 0.7681637168141593
+    },
+    {
+      "model_name": "xgb_fs2",
+      "model_family": "xgb",
+      "role": "base",
+      "feature_set": "fs2_top1024",
+      "n_seeds": 3,
+      "mean_fold_log_loss": 0.5813893282698025,
+      "std_fold_log_loss": 0.045578109125305945,
+      "mean_fold_roc_auc": 0.7487198067632851,
+      "std_fold_roc_auc": 0.07151400736767669,
+      "median_feature_count": 1027,
+      "recommended_n_estimators": 208.0,
+      "oof_log_loss": 0.5813277725427419,
+      "oof_roc_auc": 0.7543141592920354
+    },
+    {
+      "model_name": "xgb_fs3",
+      "model_family": "xgb",
+      "role": "base",
+      "feature_set": "fs3_stable",
+      "n_seeds": 3,
+      "mean_fold_log_loss": 0.5838538283525139,
+      "std_fold_log_loss": 0.03617542076222174,
+      "mean_fold_roc_auc": 0.7534830917874397,
+      "std_fold_roc_auc": 0.04720813323807311,
+      "median_feature_count": 182,
+      "recommended_n_estimators": 126.0,
+      "oof_log_loss": 0.5838324608223607,
+      "oof_roc_auc": 0.7551548672566373
+    },
+    {
+      "model_name": "elastic_fs2",
+      "model_family": "elastic_net",
+      "role": "base",
+      "feature_set": "fs2_top512",
+      "n_seeds": 1,
+      "mean_fold_log_loss": 0.5840929262746071,
+      "std_fold_log_loss": 0.04206441972628468,
+      "mean_fold_roc_auc": 0.7524275362318841,
+      "std_fold_roc_auc": 0.05284406040256656,
+      "median_feature_count": 515,
+      "recommended_n_estimators": NaN,
+      "oof_log_loss": 0.5840426655718302,
+      "oof_roc_auc": 0.7529867256637168
+    },
+    {
+      "model_name": "egfr_only_lr",
+      "model_family": "elastic_net",
+      "role": "diagnostic",
+      "feature_set": "fs0_egfr_only",
+      "n_seeds": 1,
+      "mean_fold_log_loss": 0.6161297241554891,
+      "std_fold_log_loss": 0.03478991147246508,
+      "mean_fold_roc_auc": 0.7255772946859904,
+      "std_fold_roc_auc": 0.04113037332510538,
+      "median_feature_count": 1,
+      "recommended_n_estimators": NaN,
+      "oof_log_loss": 0.6160420932781242,
+      "oof_roc_auc": 0.7272234513274336
+    },
+    {
+      "model_name": "clinical_lr",
+      "model_family": "elastic_net",
+      "role": "diagnostic",
+      "feature_set": "fs0_clinical",
+      "n_seeds": 1,
+      "mean_fold_log_loss": 0.6164710365990954,
+      "std_fold_log_loss": 0.033516551234065856,
+      "mean_fold_roc_auc": 0.7263973429951692,
+      "std_fold_roc_auc": 0.04208389560225055,
+      "median_feature_count": 3,
+      "recommended_n_estimators": NaN,
+      "oof_log_loss": 0.6163900908428017,
+      "oof_roc_auc": 0.7275000000000001
+    },
+    {
+      "model_name": "clinical_no_egfr_lr",
+      "model_family": "elastic_net",
+      "role": "diagnostic",
+      "feature_set": "fs0_clinical_no_egfr",
+      "n_seeds": 1,
+      "mean_fold_log_loss": 0.6888433020104987,
+      "std_fold_log_loss": 0.005041255925828667,
+      "mean_fold_roc_auc": 0.5589178743961354,
+      "std_fold_roc_auc": 0.04467492894169797,
+      "median_feature_count": 2,
+      "recommended_n_estimators": NaN,
+      "oof_log_loss": 0.6888569214851972,
+      "oof_roc_auc": 0.5569579646017699
+    }
+  ],
+  "ensembles_ranked": [
+    {
+      "candidate_name": "stack_calibrated",
+      "recipe_type": "stack_calibrated",
+      "base_model_names": "xgb_fs1,xgb_fs2,xgb_fs3,elastic_fs2",
+      "oof_log_loss": 0.5764843262918871,
+      "oof_roc_auc": 0.7604646017699115
+    },
+    {
+      "candidate_name": "blend",
+      "recipe_type": "blend",
+      "base_model_names": "xgb_fs1,xgb_fs2,xgb_fs3,elastic_fs2",
+      "oof_log_loss": 0.5765838449237369,
+      "oof_roc_auc": 0.7636725663716815
+    },
+    {
+      "candidate_name": "stack_ridge",
+      "recipe_type": "stack_ridge",
+      "base_model_names": "xgb_fs1,xgb_fs2,xgb_fs3,elastic_fs2",
+      "oof_log_loss": 0.5783485672526223,
+      "oof_roc_auc": 0.7604867256637168
+    }
+  ]
+}

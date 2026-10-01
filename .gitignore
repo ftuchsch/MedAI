@@ -3,8 +3,24 @@ __pycache__/
 *.py[cod]
 *.so
 .Python
-.venv/
+.venv*/
 venv/
 env/
 ENV/
 .ipynb_checkpoints/
+
+# Local configuration and developer caches
+.env
+.env.*
+!.env.example
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# New data and generated artifacts (already tracked files remain tracked)
+/data/*.csv
+**/weights/*.joblib
+**/results_smoke*/
+predictions*.csv
+*.log

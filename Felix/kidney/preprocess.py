@@ -1,96 +1,114 @@
 #!/usr/bin/env python3
 """
-preprocess.py — Data loading helpers
-=====================================
-Loads the pre-processed, combat-corrected CSV files and extracts the
-feature matrix and binary ATI labels.
-
-Used by train.py, evaluate.py, and predict.py.
-
-LABELS
-------
-Binary ATI (derived from biopsy histopathology):
-    0 = No ATI
-    1 = ATI present
-
-FEATURES
---------
-    Proteomics : 6,592 log2-normalised, combat-corrected SomaScan abundances
-                 (anonymised as feature_XXXX columns)
-    Clinical   : age, sex, baseline_egfr_23
-
-USAGE
------
-    from preprocess import load_data, build_features_and_labels
-    df = load_data("/path/to/train.csv")
-    X, y, feature_cols = build_features_and_labels(df)
+preprocess.py — Data loading and fold-safe feature selection helpers
+====================================================================
 """
 
+from __future__ import annotations
+
 import logging
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from sklearn.feature_selection import f_classif
 
 from model import CLINICAL_FEATURES
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(message)s",
-    datefmt="%H:%M:%S",
-)
+logger = logging.getLogger(__name__)
 
 
 def load_data(data_path: str) -> pd.DataFrame:
-    """
-    Load a pre-processed CSV (train.csv or test CSV).
-
-    The CSV is expected to have columns:
-        sample_id, ati, age, sex, baseline_egfr_23, feature_XXXX...
-    """
-    logging.info(f"Loading data from {data_path}...")
+    """Load a pre-processed CSV and log its shape."""
+    logger.info(f"Loading data from {data_path}...")
     df = pd.read_csv(data_path, low_memory=False, na_values=[".", ""])
-    logging.info(f"  {len(df)} samples, {len(df.columns)} columns")
+    logger.info(f"  {len(df)} samples, {len(df.columns)} columns")
     return df
 
 
-def build_features_and_labels(df: pd.DataFrame):
+def get_target(df: pd.DataFrame) -> np.ndarray:
+    """Extract the binary ATI target."""
+    if "ati" not in df.columns:
+        raise KeyError("Expected target column 'ati' to be present.")
+    y = df["ati"].astype(int).to_numpy()
+    logger.info(f"Samples: {len(y)} | No ATI: {(y == 0).sum()} | ATI: {(y == 1).sum()}")
+    return y
+
+
+def get_protein_columns(df: pd.DataFrame) -> list[str]:
+    """Return lexicographically sorted protein columns."""
+    return sorted([c for c in df.columns if c.startswith("feature_")])
+
+
+def get_clinical_columns(df: pd.DataFrame) -> list[str]:
+    """Return the clinical covariates that are present in the input frame."""
+    return [c for c in CLINICAL_FEATURES if c in df.columns]
+
+
+def score_proteins(df: pd.DataFrame, y: np.ndarray) -> pd.DataFrame:
+    """Rank proteins by univariate ANOVA F-score inside the current dataset."""
+    protein_cols = get_protein_columns(df)
+    if not protein_cols:
+        return pd.DataFrame(columns=["feature", "score"])
+
+    scores, _ = f_classif(df[protein_cols], y)
+    scores = np.nan_to_num(scores, nan=0.0, posinf=0.0, neginf=0.0)
+
+    return (
+        pd.DataFrame({"feature": protein_cols, "score": scores})
+        .sort_values(["score", "feature"], ascending=[False, True])
+        .reset_index(drop=True)
+    )
+
+
+def select_feature_columns(
+    df: pd.DataFrame,
+    y: np.ndarray,
+    protein_top_k: int | None,
+) -> list[str]:
     """
-    Extract the feature matrix X and binary ATI label vector y.
+    Select the top-k protein columns and always keep the available clinical features.
 
-    Feature set = anonymised protein columns (feature_XXXX) + CLINICAL_FEATURES.
-    Rows missing any feature or the ATI label are dropped (complete-case analysis).
-
-    Returns
-    -------
-    X            : np.ndarray  (n_samples, n_features)
-    y            : np.ndarray  (n_samples,)  0 = No ATI, 1 = ATI
-    feature_cols : list[str]   column names in the same order as X columns
+    The ranking must be computed on training data only during CV to avoid leakage.
     """
-    protein_cols = sorted([c for c in df.columns if c.startswith("feature_")])
-    feature_cols = protein_cols + CLINICAL_FEATURES
+    protein_cols = get_protein_columns(df)
+    clinical_cols = get_clinical_columns(df)
 
-    # Check which features are available
-    available = [c for c in feature_cols if c in df.columns]
+    if protein_top_k is None or protein_top_k >= len(protein_cols):
+        selected_proteins = protein_cols
+    elif protein_top_k <= 0:
+        selected_proteins = []
+    else:
+        ranking = score_proteins(df, y)
+        selected_proteins = ranking["feature"].head(protein_top_k).tolist()
+
+    feature_cols = selected_proteins + clinical_cols
+    if not feature_cols:
+        raise ValueError("No feature columns were selected.")
+    return feature_cols
+
+
+def build_feature_frame(df: pd.DataFrame, feature_cols: list[str]) -> pd.DataFrame:
+    """Align a DataFrame to the expected feature order."""
     missing = [c for c in feature_cols if c not in df.columns]
     if missing:
-        logging.warning(f"{len(missing)} feature columns missing from data")
-    feature_cols = available
+        logger.warning(
+            f"{len(missing)} expected feature columns missing from input. "
+            f"Filled with NaN. First few: {missing[:5]}"
+        )
+    return df.reindex(columns=feature_cols).astype(float)
 
-    required = feature_cols + ["ati"]
-    df_clean = df[required].copy().dropna(subset=required)
 
-    n_dropped = len(df) - len(df_clean)
-    if n_dropped:
-        logging.warning(f"Dropped {n_dropped} rows with missing values")
-
-    y = df_clean["ati"].astype(int).values
-    X = df_clean[feature_cols].values
-
-    logging.info(
-        f"Samples: {len(df_clean)} | No ATI: {(y == 0).sum()} | ATI: {(y == 1).sum()}"
-    )
-    logging.info(
+def build_features_and_labels(
+    df: pd.DataFrame,
+    feature_cols: list[str] | None = None,
+    protein_top_k: int | None = None,
+):
+    """Build the feature matrix, target vector, and selected feature list."""
+    y = get_target(df)
+    if feature_cols is None:
+        feature_cols = select_feature_columns(df, y, protein_top_k=protein_top_k)
+    X = build_feature_frame(df, feature_cols).to_numpy()
+    logger.info(
         f"Features: {sum(c.startswith('feature_') for c in feature_cols)} protein"
         f" + {sum(not c.startswith('feature_') for c in feature_cols)} clinical"
         f" = {len(feature_cols)} total"

@@ -1,0 +1,4 @@
+candidate_name,recipe_type,base_model_names,oof_log_loss,oof_roc_auc
+stack_calibrated,stack_calibrated,"xgb_fs1,xgb_fs2,xgb_fs3,elastic_fs2",0.5764843262918871,0.7604646017699115
+blend,blend,"xgb_fs1,xgb_fs2,xgb_fs3,elastic_fs2",0.5765838449237369,0.7636725663716815
+stack_ridge,stack_ridge,"xgb_fs1,xgb_fs2,xgb_fs3,elastic_fs2",0.5783485672526223,0.7604867256637168

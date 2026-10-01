@@ -1,166 +1,201 @@
-# Boston Kidney Biopsy Cohort — Hackathon Starter Code
+# ATI Ensemble Pipeline
 
-## Task
+## Scope
 
-Predict **acute tubular injury (ATI)** from plasma proteomics, as a binary classification problem:
+This track implements repeated validation, clinical ablations, and model
+ensembling for ATI prediction. See the [project README](../README.md) for the
+full project context, preserved modeling tracks, and recorded results.
 
-| Label | Meaning |
-|-------|---------|
-| **0** | No ATI |
-| **1** | ATI present |
+The implemented approaches are:
 
-Your model will be evaluated on an **external held-out test cohort** (KPMP) using **log loss**. Your goal is to build a model that generalises beyond the BKBC training data.
+- repeated leakage-safe stratified cross-validation
+- fold-internal feature selection only
+- `XGBoost` anchor models on multiple feature sets
+- optional `LightGBM` tree models on the same feature ladders
+- elastic-net logistic regression as a diversity model
+- clinical and eGFR-only ablations
+- second-stage OOF blending / stacking / calibrated stacking
+- final saved ensemble bundle for deterministic inference
 
----
+The implementation is built around the actual local training file:
 
-## Data
+- `426` rows
+- `sample_id`
+- binary target `ati`
+- `6592` anonymized proteomic features (`feature_XXXX`)
+- `age`
+- `sex`
+- `baseline_egfr_23`
 
-Training data is located at:
+The local dataset is smaller than the planned cohort sizes in the research notes.
 
-```
-/projectnb/medaihack/BKBC-hackathon/BKBC_train/train.csv
-```
+## Setup
 
-It contains **426 patients** (one row each) with the following columns:
-
-| Column group | Description |
-|---|---|
-| `sample_id` | Anonymised patient identifier |
-| `ati` | Binary ATI label (0 = No ATI, 1 = ATI) — your prediction target |
-| `age` | Age (10-year bin midpoint) |
-| `sex` | Sex (1 = Male, 2 = Female) |
-| `baseline_egfr_23` | Baseline eGFR (ml/min/1.73 m²) |
-| `feature_XXXX` × 6,592 | Log₂-normalised, ComBat-corrected SomaScan plasma protein abundances |
-
-All protein features have been **batch-corrected** using reference ComBat so they are directly comparable across the training and test cohorts.
-
----
-
-## Environment Setup
-
-One person per team should be responsible for creating and managing the team's virtual environment.
-
-**First-time setup:**
+Use Python 3.12 and an activated virtual environment. From the repository root:
 
 ```bash
-module load medaihack/spring-2026
-module load python3/3.12.4
-
-# Within your directory activate the following commands
-virtualenv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -r kidney/requirements.txt
+# Optional, for lgbm_fs1 and lgbm_fs2:
+python -m pip install -r requirements/lightgbm.txt
 ```
 
-**Activating the environment in subsequent sessions:**
+Commands below run from `kidney/`. From the root, prefix script paths with
+`kidney/`. Evaluation defaults to five folds and three repeats; use `--repeats 1`
+for a shorter run. Early stopping uses validation labels, and ensemble search
+is not evaluated with a fully nested outer CV. See the root README for how to
+interpret the results.
 
-- **Jupyter or Code Server (OnDemand):** Load both modules and place the `source` command in the pre-launch dialog box.
-- **Batch scripts:** Include all three commands:
+---
 
-```bash
-module load medaihack/spring-2026
-module load python3/3.12.4
-source .venv/bin/activate
-```
+## Feature Ladder
 
-**Verify your setup:**
+- `FS0 clinical`: `age`, `sex`, `baseline_egfr_23`
+- `FS0 clinical no eGFR`: `age`, `sex`
+- `FS0 eGFR only`: `baseline_egfr_23`
+- `FS1 all`: all proteins plus clinical covariates
+- `FS2 top-k`: within-fold univariate filtering, then keep top `1024` or `512`
+- `FS3 stable`: within-fold prefiltering plus repeated elastic-net frequency selection
 
-```bash
-python model.py
+All feature filtering is performed **inside each training fold only**.
+
+---
+
+## Base Models
+
+- `xgb_fs1`: XGBoost on FS1, 3-seed averaging
+- `xgb_fs2`: XGBoost on FS2 top-1024, 3-seed averaging
+- `xgb_fs3`: XGBoost on FS3 stable features, 3-seed averaging
+- `lgbm_fs1`: LightGBM on FS1, 3-seed averaging, optional dependency
+- `lgbm_fs2`: LightGBM on FS2 top-1024, 3-seed averaging, optional dependency
+- `elastic_fs2`: elastic-net logistic regression on FS2 top-512
+
+Diagnostic-only models:
+
+- `egfr_only_lr`
+- `clinical_lr`
+- `clinical_no_egfr_lr`
+
+---
+
+## Workflow
+
+```text
+data/train.csv
+    |
+    +--> evaluate.py
+    |      - repeated 5-fold StratifiedKFold
+    |      - OOF predictions for every base model
+    |      - clinical / eGFR stress tests
+    |      - OOF blend / stack / calibrated-stack evaluation
+    |      - final_recipe.json
+    |
+    +--> train.py
+    |      - fit chosen base models on all rows
+    |      - fit saved combiner from OOF base predictions
+    |      - save ensemble_bundle.joblib
+    |
+    +--> predict.py / predict.sh
+           - align input columns to saved feature order
+           - score each base model
+           - combine them with the saved final recipe
 ```
 
 ---
 
-## Pipeline
+## Step 1 — Evaluate
 
-```
-/projectnb/medaihack/BKBC-hackathon/BKBC_train/train.csv
-       │
-       ├──→ evaluate.py    (iterate: k-fold CV on training data)
-       │        └── results/cv_results.csv, confusion matrices
-       │
-       ├──→ train.py        (final: train on ALL data, save weights)
-       │        └── weights/xgboost_model.json, feature_cols.json
-       │
-       └──→ predict.sh      (inference: predict on new samples)
-                └── predictions.csv
-```
-
----
-
-## Step 1 — Evaluate with cross-validation
-
-Use this to iterate on your model. It runs stratified k-fold CV on the training data and reports AUC and log loss per fold.
+Run the repeated OOF experiment first:
 
 ```bash
-python evaluate.py --data /projectnb/medaihack/BKBC-hackathon/BKBC_train/train.csv
+python evaluate.py
 ```
 
-**Output:**
-- Per-fold metrics (AUC, log loss)
-- Confusion matrix plots
-- Summary table comparing XGBoost and Lasso LR
-
----
-
-## Step 2 — Train final model
-
-Once you are happy with your model, train on ALL the training data and save weights:
+Or with explicit paths:
 
 ```bash
-python train.py --data /projectnb/medaihack/BKBC-hackathon/BKBC_train/train.csv
+python evaluate.py --data ../data/train.csv --out ./results
 ```
 
-This saves `weights/xgboost_model.json` and `weights/feature_cols.json`.
+8-core SCC-style example using outer parallelism and LightGBM when installed:
+
+```bash
+python evaluate.py \
+  --data ../data/train.csv \
+  --out ./results_lgbm \
+  --repeats 4 \
+  --models xgb_fs1 xgb_fs2 lgbm_fs2 \
+  --workers 4 \
+  --xgb-n-jobs 1 \
+  --lgbm-n-jobs 1 \
+  --elastic-n-jobs 1
+```
+
+Key outputs in `./results/`:
+
+- `base_oof_predictions_long.csv`
+- `base_oof_predictions_mean.csv`
+- `base_fold_metrics.csv`
+- `base_model_summary.csv`
+- `ensemble_summary.csv`
+- `final_recipe.json`
+- `experiment_summary.json`
 
 ---
 
-## Step 3 — Predict on new data
+## Step 2 — Train The Final Ensemble
+
+After evaluation:
+
+```bash
+python train.py
+```
+
+Or:
+
+```bash
+python train.py --data ../data/train.csv --results-dir ./results --out ./weights
+```
+
+Key outputs in `./weights/`:
+
+- `ensemble_bundle.joblib`
+- `ensemble_metadata.json`
+- `feature_importance_summary.csv`
+
+---
+
+## Step 3 — Predict
 
 ```bash
 bash predict.sh /path/to/new_data.csv
-# or with custom output path:
-bash predict.sh /path/to/new_data.csv my_predictions.csv
-
-# for the sake of example, evaluate on the training set
-bash predict.sh /projectnb/medaihack/BKBC-hackathon/BKBC_train/train.csv
 ```
 
-If the input file contains an `ati` column, evaluation metrics are printed automatically.
-
-**Output columns:**
-
-| Column | Description |
-|--------|-------------|
-| `sample_id` | Patient identifier |
-| `prob_ati` | Predicted probability of ATI (0–1) |
-| `pred_label` | Hard prediction: 0 = No ATI, 1 = ATI |
-| `true_label` | Ground truth (only if `ati` column is present) |
-
----
-
-## File Structure
-
-```
-BKBC/
-├── predict.sh         ← bash wrapper for prediction
-├── predict.py         ← inference on new data
-├── train.py           ← train model, save weights
-├── evaluate.py        ← k-fold cross-validation
-├── model.py           ← model definitions and constants
-├── preprocess.py      ← data loading helpers
-├── requirements.txt   ← Python dependencies
-├── README.md          ← this file
-└── weights/           ← pre-trained model (ready to use)
-    ├── xgboost_model.json
-    └── feature_cols.json
-```
-
----
-## Getting Help
+Or:
 
 ```bash
-python train.py    --help
-python evaluate.py --help
-python predict.py  --help
+python predict.py --data /path/to/new_data.csv --out predictions.csv
 ```
+
+Optional:
+
+```bash
+python predict.py --data /path/to/new_data.csv --include-base-probs
+```
+
+Prediction output columns:
+
+- `sample_id`
+- `prob_ati`
+- `pred_label`
+- one `prob_<base_model>` column per base model when requested
+- `true_label` if the input file contains `ati`
+
+---
+
+## Notes
+
+- The pipeline assumes the local `train.csv` is the authoritative dataset.
+- `lgbm_fs1` and `lgbm_fs2` require the `lightgbm` Python package, but non-LightGBM runs still work without it.
+- `baseline_egfr_23` is treated as a potential proxy trap, so ablations are part of the default evaluation.
+- Final ensemble selection uses OOF log loss as the primary metric and AUROC as a secondary check.
+- No feature selection is recomputed at inference time.

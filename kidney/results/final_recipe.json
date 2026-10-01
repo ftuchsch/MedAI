@@ -1,0 +1,15 @@
+{
+  "recipe_type": "single_model",
+  "candidate_name": "xgb_fs1",
+  "base_model_names": [
+    "xgb_fs1"
+  ],
+  "selection_metric": "oof_log_loss",
+  "candidate_oof_log_loss": 0.5725029004608351,
+  "candidate_oof_roc_auc": 0.7681637168141593,
+  "recommended_n_estimators": {
+    "xgb_fs1": 228,
+    "xgb_fs2": 208,
+    "xgb_fs3": 126
+  }
+}

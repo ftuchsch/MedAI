@@ -1,0 +1,64 @@
+{
+  "bundle_version": 1,
+  "data_path": "/Users/felixtuchscherer/Desktop/MedAI/data/train.csv",
+  "results_dir": "/Users/felixtuchscherer/Desktop/MedAI/kidney/results",
+  "recipe_type": "single_model",
+  "candidate_name": "xgb_fs1",
+  "base_model_names": [
+    "xgb_fs1"
+  ],
+  "n_samples": 426,
+  "n_ati_positive": 200,
+  "n_ati_negative": 226,
+  "combiner_training_metrics": {
+    "log_loss": 0.5725029004608351,
+    "positive_rate_at_0_5": 0.392018779342723,
+    "roc_auc": 0.7681637168141593
+  },
+  "model_groups": {
+    "xgb_fs1": {
+      "family": "xgb",
+      "feature_set": "fs1_all",
+      "feature_count": 6595,
+      "recommended_n_estimators": 228,
+      "selection_meta": {
+        "strategy": "all_features",
+        "selected_protein_count": 6592,
+        "selected_clinical_columns": [
+          "age",
+          "sex",
+          "baseline_egfr_23"
+        ],
+        "feature_set_name": "fs1_all",
+        "selected_feature_count": 6595,
+        "selected_feature_preview": [
+          "feature_0001",
+          "feature_0002",
+          "feature_0003",
+          "feature_0004",
+          "feature_0005",
+          "feature_0006",
+          "feature_0007",
+          "feature_0008",
+          "feature_0009",
+          "feature_0010",
+          "feature_0011",
+          "feature_0012",
+          "feature_0013",
+          "feature_0014",
+          "feature_0015",
+          "feature_0016",
+          "feature_0017",
+          "feature_0018",
+          "feature_0019",
+          "feature_0020",
+          "feature_0021",
+          "feature_0022",
+          "feature_0023",
+          "feature_0024",
+          "feature_0025"
+        ]
+      }
+    }
+  }
+}

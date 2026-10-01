@@ -1,9 +1,2 @@
-# Minimal local environment for Mac-friendly iteration in Nav/
-numpy
-pandas
-scikit-learn
-scipy
-xgboost
-lightgbm
-matplotlib
-tqdm
+# Compatibility entry point for local installs.
+-r requirements.txt

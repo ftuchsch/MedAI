@@ -1,166 +1,165 @@
-# Boston Kidney Biopsy Cohort — Hackathon Starter Code
+# Boston Kidney Biopsy Cohort — TabPFN Pipeline
 
 ## Task
 
-Predict **acute tubular injury (ATI)** from plasma proteomics, as a binary classification problem:
+See the [project README](../../README.md) for the full modeling comparison,
+recorded results, and validation limitations.
+
+Predict **acute tubular injury (ATI)** from plasma proteomics as a binary
+classification problem:
 
 | Label | Meaning |
 |-------|---------|
 | **0** | No ATI |
 | **1** | ATI present |
 
-Your model will be evaluated on an **external held-out test cohort** (KPMP) using **log loss**. Your goal is to build a model that generalises beyond the BKBC training data.
+The final leaderboard metric is **log loss** on an external held-out cohort, so
+the Felix pipeline now focuses on a single deployment path:
+
+- TabPFN v2 classifier
+- top-k protein filtering before modeling
+- the 3 clinical covariates kept alongside the selected proteins
 
 ---
 
 ## Data
 
-Training data is located at:
+In this repo the default training CSV is:
 
-```
-/projectnb/medaihack/BKBC-hackathon/BKBC_train/train.csv
+```bash
+../../data/train.csv
 ```
 
-It contains **426 patients** (one row each) with the following columns:
+The table contains **426 patients** with:
 
 | Column group | Description |
 |---|---|
 | `sample_id` | Anonymised patient identifier |
-| `ati` | Binary ATI label (0 = No ATI, 1 = ATI) — your prediction target |
+| `ati` | Binary ATI label |
 | `age` | Age (10-year bin midpoint) |
 | `sex` | Sex (1 = Male, 2 = Female) |
-| `baseline_egfr_23` | Baseline eGFR (ml/min/1.73 m²) |
-| `feature_XXXX` × 6,592 | Log₂-normalised, ComBat-corrected SomaScan plasma protein abundances |
+| `baseline_egfr_23` | Baseline eGFR |
+| `feature_XXXX` × 6,592 | ComBat-corrected SomaScan protein abundances |
 
-All protein features have been **batch-corrected** using reference ComBat so they are directly comparable across the training and test cohorts.
+The current default is **top 100 proteins + 3 clinical features** before
+TabPFN, which keeps the model comfortably inside the open-source v2 feature
+limits.
 
 ---
 
 ## Environment Setup
 
-One person per team should be responsible for creating and managing the team's virtual environment.
-
-**First-time setup:**
-
 ```bash
-module load medaihack/spring-2026
-module load python3/3.12.4
-
-# Within your directory activate the following commands
-virtualenv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+# From the repository root, using Python 3.12:
+python3.12 -m venv .venv-tabpfn
+source .venv-tabpfn/bin/activate
+pip install -r Felix/kidney/requirements.txt
+# Run the commands below from this workspace:
+cd Felix/kidney
 ```
 
-**Activating the environment in subsequent sessions:**
+`requirements.txt` now pins `tabpfn==2.0.0`.
 
-- **Jupyter or Code Server (OnDemand):** Load both modules and place the `source` command in the pre-launch dialog box.
-- **Batch scripts:** Include all three commands:
+The prediction wrapper uses the active environment. `MEDAI_PYTHON` can override
+the interpreter; no hardcoded cluster or virtual environment path is needed.
 
-```bash
-module load medaihack/spring-2026
-module load python3/3.12.4
-source .venv/bin/activate
-```
-
-**Verify your setup:**
-
-```bash
-python model.py
-```
+The first `train.py` or `evaluate.py` run may download the TabPFN checkpoint
+into the local cache if it is not already present.
 
 ---
 
 ## Pipeline
 
-```
-/projectnb/medaihack/BKBC-hackathon/BKBC_train/train.csv
-       │
-       ├──→ evaluate.py    (iterate: k-fold CV on training data)
-       │        └── results/cv_results.csv, confusion matrices
-       │
-       ├──→ train.py        (final: train on ALL data, save weights)
-       │        └── weights/xgboost_model.json, feature_cols.json
-       │
-       └──→ predict.sh      (inference: predict on new samples)
-                └── predictions.csv
+```text
+data/train.csv
+    |
+    |-- evaluate.py   -> fold-safe CV, OOF predictions, feature sets
+    |-- train.py      -> fitted TabPFN bundle in weights/
+    `-- predict.py    -> inference on new samples
 ```
 
 ---
 
-## Step 1 — Evaluate with cross-validation
+## Step 1 — Cross-Validation
 
-Use this to iterate on your model. It runs stratified k-fold CV on the training data and reports AUC and log loss per fold.
+Run fold-safe CV with per-fold top-k feature selection:
 
 ```bash
-python evaluate.py --data /projectnb/medaihack/BKBC-hackathon/BKBC_train/train.csv
+python evaluate.py --data ../../data/train.csv --protein-top-k 100
 ```
 
-**Output:**
-- Per-fold metrics (AUC, log loss)
-- Confusion matrix plots
-- Summary table comparing XGBoost and Lasso LR
+Outputs written to `./results/`:
+
+- `cv_results.csv`
+- `oof_predictions_tabpfn.csv`
+- `cv_feature_sets_tabpfn.json`
+- `cv_confusion_matrix_tabpfn.png`
 
 ---
 
-## Step 2 — Train final model
+## Step 2 — Train Final Model
 
-Once you are happy with your model, train on ALL the training data and save weights:
+Train on all available BKBC samples and save a deployable TabPFN bundle:
 
 ```bash
-python train.py --data /projectnb/medaihack/BKBC-hackathon/BKBC_train/train.csv
+python train.py --data ../../data/train.csv --protein-top-k 100
 ```
 
-This saves `weights/xgboost_model.json` and `weights/feature_cols.json`.
+Outputs written to `./weights/`:
+
+- `tabpfn_model.joblib`
+- `feature_cols.json`
+- `model_metadata.json`
+- `feature_selection.csv`
 
 ---
 
-## Step 3 — Predict on new data
+## Step 3 — Predict On New Data
 
 ```bash
 bash predict.sh /path/to/new_data.csv
-# or with custom output path:
-bash predict.sh /path/to/new_data.csv my_predictions.csv
 
-# for the sake of example, evaluate on the training set
-bash predict.sh /projectnb/medaihack/BKBC-hackathon/BKBC_train/train.csv
+# optional explicit Python call
+python predict.py --data /path/to/new_data.csv --out predictions.csv
 ```
 
-If the input file contains an `ati` column, evaluation metrics are printed automatically.
+If the input CSV contains `ati`, `predict.py` also prints AUC and log loss.
 
-**Output columns:**
+Output columns:
 
 | Column | Description |
 |--------|-------------|
 | `sample_id` | Patient identifier |
-| `prob_ati` | Predicted probability of ATI (0–1) |
-| `pred_label` | Hard prediction: 0 = No ATI, 1 = ATI |
-| `true_label` | Ground truth (only if `ati` column is present) |
+| `prob_ati` | Predicted probability of ATI |
+| `pred_label` | Thresholded prediction at 0.5 |
+| `true_label` | Ground truth when available |
 
 ---
 
 ## File Structure
 
-```
-BKBC/
-├── predict.sh         ← bash wrapper for prediction
-├── predict.py         ← inference on new data
-├── train.py           ← train model, save weights
-├── evaluate.py        ← k-fold cross-validation
-├── model.py           ← model definitions and constants
-├── preprocess.py      ← data loading helpers
-├── requirements.txt   ← Python dependencies
-├── README.md          ← this file
-└── weights/           ← pre-trained model (ready to use)
-    ├── xgboost_model.json
-    └── feature_cols.json
+```text
+Felix/kidney/
+├── evaluate.py
+├── model.py
+├── predict.py
+├── predict.sh
+├── preprocess.py
+├── train.py
+├── README.md
+├── requirements.txt
+└── weights/
+    ├── tabpfn_model.joblib
+    ├── feature_cols.json
+    └── model_metadata.json
 ```
 
 ---
-## Getting Help
+
+## Help
 
 ```bash
-python train.py    --help
+python train.py --help
 python evaluate.py --help
-python predict.py  --help
+python predict.py --help
 ```

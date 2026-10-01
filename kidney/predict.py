@@ -1,35 +1,24 @@
 #!/usr/bin/env python3
 """
-predict.py — Run a trained model on new / external data
-=========================================================
-Loads the XGBoost model saved by train.py and generates predictions
-for any new dataset that shares the same feature schema.
-
-Column order in the input file does not matter — alignment to the training
-feature list is handled automatically.  Missing columns are filled with NaN
-(XGBoost handles them natively via its built-in missing-value support).
-
-USAGE
------
-    python predict.py --data /path/to/new_data.csv
-    python predict.py --data /path/to/new_data.csv --out predictions.csv
-
-OUTPUT COLUMNS
---------------
-    sample_id   — sample_id if present in input, otherwise row index
-    prob_ati    — predicted probability of ATI (0–1)
-    pred_label  — hard prediction: 0 = No ATI, 1 = ATI  (threshold 0.5)
-    true_label  — ground-truth (0/1) if an 'ati' column is present; else omitted
+predict.py — Run the trained ATI ensemble on new data
+=====================================================
+Loads the saved ensemble bundle, aligns incoming columns to each base model's
+saved feature order, and outputs final ATI probabilities.
 """
 
+from __future__ import annotations
+
 import argparse
-import json
 import logging
 from pathlib import Path
 
+import joblib
 import numpy as np
 import pandas as pd
-from xgboost import XGBClassifier
+from sklearn.metrics import classification_report, log_loss, roc_auc_score
+
+from ensemble_utils import combine_from_base_matrix, predict_model_group
+from model import ID_COLUMN, TARGET_COLUMN
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,126 +26,115 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
-_SCRIPT_DIR    = Path(__file__).resolve().parent
-_MODEL_PATH    = _SCRIPT_DIR / "weights" / "xgboost_model.json"
-_FEATURES_PATH = _SCRIPT_DIR / "weights" / "feature_cols.json"
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_BUNDLE_PATH = _SCRIPT_DIR / "weights" / "ensemble_bundle.joblib"
 
 
 def parse_args():
-    p = argparse.ArgumentParser(
-        description="Run a trained XGBoost ATI model on new proteomics data."
-    )
+    p = argparse.ArgumentParser(description="Run the trained ATI ensemble on a new CSV.")
     p.add_argument(
         "--data",
         required=True,
-        help="Path to input CSV (same feature columns as training data)",
+        help="Path to input CSV",
     )
     p.add_argument(
         "--out",
         default="predictions.csv",
         help="Output CSV path (default: predictions.csv)",
     )
+    p.add_argument(
+        "--model-dir",
+        type=Path,
+        default=_BUNDLE_PATH.parent,
+        help="Directory containing ensemble_bundle.joblib (default: ./weights/)",
+    )
+    p.add_argument(
+        "--include-base-probs",
+        action="store_true",
+        help="Include one probability column per base model in the output.",
+    )
     return p.parse_args()
 
 
-def load_model(model_path: str, features_path: str):
-    """
-    Restore a trained XGBoost model and its feature column list from disk.
-    """
-    logging.info(f"Loading model        : {model_path}")
-    model = XGBClassifier()
-    model.load_model(model_path)
-
-    logging.info(f"Loading feature list : {features_path}")
-    with open(features_path) as f:
-        feature_cols = json.load(f)
-
-    logging.info(f"Model expects {len(feature_cols)} features")
-    return model, feature_cols
+def load_bundle(bundle_path: Path) -> dict:
+    """Restore the saved ensemble bundle."""
+    logging.info(f"Loading ensemble bundle: {bundle_path}")
+    return joblib.load(bundle_path)
 
 
-def prepare_features(df: pd.DataFrame, feature_cols: list):
-    """
-    Align a new DataFrame to the feature columns expected by the model.
-
-    Returns
-    -------
-    X   : np.ndarray  (n_samples, n_features)
-    ids : pd.Series   sample identifiers
-    """
-    missing = [c for c in feature_cols if c not in df.columns]
+def summarize_missing_columns(df: pd.DataFrame, feature_cols: list[str]):
+    """Log missing incoming columns relative to one base model's feature order."""
+    missing = [col for col in feature_cols if col not in df.columns]
     if missing:
         logging.warning(
-            f"{len(missing)} feature columns absent from input — filled with NaN. "
-            f"First few: {missing[:5]}"
+            f"{len(missing)} expected columns absent from input; "
+            f"filled with NaN. First few: {missing[:5]}"
         )
 
-    X   = df.reindex(columns=feature_cols).values.astype(float)
-    ids = df["sample_id"] if "sample_id" in df.columns else pd.RangeIndex(len(df))
-    return X, ids
 
+def evaluate_predictions(results: pd.DataFrame):
+    """Print metrics when ATI labels are available in the input."""
+    y_true = results["true_label"].to_numpy()
+    y_prob = results["prob_ati"].to_numpy()
+    y_pred = results["pred_label"].to_numpy()
 
-def run_predict(model, X: np.ndarray, ids, y_true=None) -> pd.DataFrame:
-    """
-    Generate ATI predictions for a feature matrix.
-    """
-    y_prob = model.predict_proba(X)[:, 1]
-    y_pred = (y_prob >= 0.5).astype(int)
-
-    out = pd.DataFrame({
-        "sample_id" : ids,
-        "prob_ati"  : y_prob,
-        "pred_label": y_pred,
-    })
-    if y_true is not None:
-        out["true_label"] = np.asarray(y_true)
-    return out
-
-
-def evaluate(results: pd.DataFrame):
-    """Print classification metrics when ground-truth labels are available."""
-    from sklearn.metrics import classification_report, roc_auc_score, log_loss
-
-    y_true = results["true_label"].values
-    y_pred = results["pred_label"].values
-    y_prob = results["prob_ati"].values
-
-    print(f"\n{'=' * 50}")
-    print(f"  Samples : {len(results)}  |  "
-          f"No ATI: {(y_true==0).sum()}  |  ATI: {(y_true==1).sum()}")
-    print(f"{'=' * 50}")
-
+    print("\n" + "=" * 60)
+    print("ATI ENSEMBLE EVALUATION ON PROVIDED DATA")
+    print("=" * 60)
+    print(f"Samples: {len(results)} | No ATI: {(y_true == 0).sum()} | ATI: {(y_true == 1).sum()}")
     if len(np.unique(y_true)) > 1:
         print(classification_report(y_true, y_pred, target_names=["No ATI", "ATI"]))
-        print(f"AUC (ROC) : {roc_auc_score(y_true, y_prob):.3f}")
-        print(f"Log loss  : {log_loss(y_true, y_prob):.3f}")
+        print(f"AUC (ROC): {roc_auc_score(y_true, y_prob):.3f}")
+        print(f"Log loss : {log_loss(y_true, y_prob):.3f}")
     else:
-        print("  (Only one class present in labels — AUC not defined)")
+        print("Only one class is present; AUC is undefined.")
 
 
 def main():
     args = parse_args()
+    bundle = load_bundle(args.model_dir / _BUNDLE_PATH.name)
+    metadata = bundle.get("metadata", {})
+    threshold = float(metadata.get("prediction_threshold", 0.5))
 
-    model, feature_cols = load_model(str(_MODEL_PATH), str(_FEATURES_PATH))
-
-    logging.info(f"Loading data from {args.data}...")
+    logging.info(f"Loading input data from {args.data}...")
     df = pd.read_csv(args.data, low_memory=False, na_values=[".", ""])
     logging.info(f"  {len(df)} samples loaded")
 
-    X, ids = prepare_features(df, feature_cols)
+    base_model_names = bundle["base_model_names"]
+    base_prob_columns = {}
+    base_matrix_parts = []
 
-    # Extract ground-truth labels if available
-    y_true = None
-    if "ati" in df.columns:
-        y_true = df["ati"].astype(int).values
-        logging.info("Found 'ati' column — will compute evaluation metrics")
+    for model_name in base_model_names:
+        group = bundle["model_groups"][model_name]
+        summarize_missing_columns(df, group["feature_cols"])
+        prob = predict_model_group(group, df)
+        base_prob_columns[model_name] = prob
+        base_matrix_parts.append(prob)
 
-    results = run_predict(model, X, ids, y_true=y_true)
+    base_matrix = np.column_stack(base_matrix_parts)
+    final_prob = combine_from_base_matrix(base_matrix, bundle["combiner"])
+    final_pred = (final_prob >= threshold).astype(int)
 
-    if y_true is not None:
-        evaluate(results)
+    ids = df[ID_COLUMN] if ID_COLUMN in df.columns else pd.RangeIndex(len(df))
+    results = pd.DataFrame(
+        {
+            ID_COLUMN: ids,
+            "prob_ati": final_prob,
+            "pred_label": final_pred,
+        }
+    )
 
-    results.to_csv(args.out, index=False)
+    if args.include_base_probs:
+        for model_name, prob in base_prob_columns.items():
+            results[f"prob_{model_name}"] = prob
+
+    if TARGET_COLUMN in df.columns:
+        results["true_label"] = df[TARGET_COLUMN].astype(int).to_numpy()
+        evaluate_predictions(results)
+
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    results.to_csv(out_path, index=False)
     logging.info(f"Predictions saved to: {args.out}")
 
 

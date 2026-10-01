@@ -1,5 +1,7 @@
 # Findings
 
+Note: the current scripts are being moved to a repeated-CV, learned-recipe flow. The concrete `0.45 / 0.40 / 0.15` blend and related comments below are historical local findings from the earlier checked-in code, not a hard-coded truth of the updated evaluation path.
+
 - The local dataset in `../data/train.csv` is `426 x 6597`, not the larger `1,500`-row split referenced in the research notes.
 - The target is `ati` and the hidden evaluation metric is `log loss`.
 - The local training CSV has:

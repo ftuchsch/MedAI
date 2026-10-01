@@ -1,5 +1,7 @@
 # Explain
 
+Note: the code path in `evaluate.py` / `train.py` is now recipe-driven rather than hard-coded to a fixed blend. The `45% / 40% / 15%` discussion below is the previous baseline that the new repeated-CV search is meant to replace or confirm, not an always-on rule baked into the scripts anymore.
+
 ## What I’m Doing
 
 I’m treating this as a small-sample, high-dimensional tabular problem. That means raw model size matters less than leakage control, variance control, and probability calibration.

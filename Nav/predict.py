@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """
-predict.py — Run the trained model bundle on new data
-=====================================================
+predict.py — Run the trained Nav bundle on new data
+===================================================
 """
+
+from __future__ import annotations
 
 import argparse
 import json
@@ -14,6 +16,8 @@ import numpy as np
 import pandas as pd
 from xgboost import XGBClassifier
 
+from preprocess import build_feature_frame
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(message)s",
@@ -22,15 +26,18 @@ logging.basicConfig(
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _WEIGHTS_DIR = _SCRIPT_DIR / "weights"
-_MODEL_PATH = _WEIGHTS_DIR / "xgboost_model.json"
-_FEATURES_PATH = _WEIGHTS_DIR / "feature_cols.json"
-_ENSEMBLE_CONFIG_PATH = _WEIGHTS_DIR / "ensemble_config.json"
 
 
 def parse_args():
     p = argparse.ArgumentParser(description="Run the trained ATI model bundle on new data.")
     p.add_argument("--data", required=True, help="Path to input CSV")
     p.add_argument("--out", default="predictions.csv", help="Output CSV path")
+    p.add_argument(
+        "--model-dir",
+        type=Path,
+        default=_WEIGHTS_DIR,
+        help="Directory containing saved model artifacts (default: ./weights/)",
+    )
     return p.parse_args()
 
 
@@ -39,56 +46,59 @@ def load_feature_cols(path: Path) -> list[str]:
         return json.load(f)
 
 
+def load_artifact(path: Path, artifact_type: str):
+    if artifact_type == "xgboost":
+        model = XGBClassifier()
+        model.load_model(str(path))
+        return model
+    if artifact_type == "sklearn":
+        return joblib.load(path)
+    raise ValueError(f"Unsupported artifact type: {artifact_type}")
+
+
 def load_components(weights_dir: Path) -> list[dict]:
-    if _ENSEMBLE_CONFIG_PATH.exists():
-        logging.info(f"Loading ensemble config: {_ENSEMBLE_CONFIG_PATH}")
-        with _ENSEMBLE_CONFIG_PATH.open() as f:
+    ensemble_config_path = weights_dir / "ensemble_config.json"
+    if ensemble_config_path.exists():
+        logging.info("Loading ensemble config: %s", ensemble_config_path)
+        with ensemble_config_path.open() as f:
             config = json.load(f)
+
         components = []
         for component in config["components"]:
             feature_cols = load_feature_cols(weights_dir / component["feature_file"])
-            model_path = weights_dir / component["model_file"]
-            if component["artifact_type"] == "xgboost":
-                model = XGBClassifier()
-                model.load_model(str(model_path))
-            elif component["artifact_type"] == "sklearn":
-                model = joblib.load(model_path)
-            else:
-                raise ValueError(f"Unsupported artifact type: {component['artifact_type']}")
+            model_files = component.get("model_files") or [component["model_file"]]
+            models = [
+                load_artifact(weights_dir / model_file, component["artifact_type"])
+                for model_file in model_files
+            ]
             components.append(
                 {
                     "name": component["name"],
-                    "weight": component["weight"],
+                    "weight": float(component["weight"]),
                     "artifact_type": component["artifact_type"],
                     "feature_cols": feature_cols,
-                    "model": model,
+                    "models": models,
                 }
             )
-        logging.info(f"Loaded {len(components)} ensemble components")
+        logging.info("Loaded %s ensemble components", len(components))
         return components
 
     logging.info("Ensemble config not found. Falling back to single XGBoost model.")
-    model = XGBClassifier()
-    model.load_model(str(_MODEL_PATH))
+    model = load_artifact(weights_dir / "xgboost_model.json", "xgboost")
     return [
         {
             "name": "Selected XGBoost",
             "weight": 1.0,
             "artifact_type": "xgboost",
-            "feature_cols": load_feature_cols(_FEATURES_PATH),
-            "model": model,
+            "feature_cols": load_feature_cols(weights_dir / "feature_cols.json"),
+            "models": [model],
         }
     ]
 
 
 def prepare_features(df: pd.DataFrame, feature_cols: list[str]) -> pd.DataFrame:
-    missing = [c for c in feature_cols if c not in df.columns]
-    if missing:
-        logging.warning(
-            f"{len(missing)} expected feature columns missing from input — filled with NaN. "
-            f"First few: {missing[:5]}"
-        )
-    return df.reindex(columns=feature_cols).astype(float)
+    """Reuse the feature alignment used during training and evaluation."""
+    return build_feature_frame(df, feature_cols)
 
 
 def evaluate(results: pd.DataFrame):
@@ -116,25 +126,30 @@ def evaluate(results: pd.DataFrame):
 def main():
     args = parse_args()
 
-    logging.info(f"Loading data from {args.data}...")
+    logging.info("Loading data from %s...", args.data)
     df = pd.read_csv(args.data, low_memory=False, na_values=[".", ""])
-    logging.info(f"  {len(df)} samples loaded")
+    logging.info("  %s samples loaded", len(df))
 
-    components = load_components(_WEIGHTS_DIR)
+    components = load_components(args.model_dir)
     ids = df["sample_id"] if "sample_id" in df.columns else pd.RangeIndex(len(df))
 
     final_prob = np.zeros(len(df), dtype=float)
     component_outputs = {}
     for component in components:
         X_component = prepare_features(df, component["feature_cols"])
-        y_prob = component["model"].predict_proba(X_component)[:, 1]
+        seed_probs = [model.predict_proba(X_component)[:, 1] for model in component["models"]]
+        y_prob = np.mean(np.vstack(seed_probs), axis=0)
         component_outputs[component["name"]] = y_prob
         final_prob += component["weight"] * y_prob
         logging.info(
-            f"[{component['name']}] weight={component['weight']:.2f} "
-            f"features={len(component['feature_cols'])}"
+            "[%s] weight=%.4f features=%s models=%s",
+            component["name"],
+            component["weight"],
+            len(component["feature_cols"]),
+            len(component["models"]),
         )
 
+    final_prob = np.clip(final_prob, 1e-6, 1 - 1e-6)
     results = pd.DataFrame(
         {
             "sample_id": ids,
@@ -145,7 +160,13 @@ def main():
 
     if len(components) > 1:
         for component_name, y_prob in component_outputs.items():
-            slug = component_name.lower().replace(" ", "_").replace("(", "").replace(")", "").replace("+", "plus")
+            slug = (
+                component_name.lower()
+                .replace(" ", "_")
+                .replace("(", "")
+                .replace(")", "")
+                .replace("+", "plus")
+            )
             results[f"prob_{slug}"] = y_prob
 
     if "ati" in df.columns:
@@ -153,8 +174,10 @@ def main():
         logging.info("Found 'ati' column — will compute evaluation metrics")
         evaluate(results)
 
-    results.to_csv(args.out, index=False)
-    logging.info(f"Predictions saved to: {args.out}")
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    results.to_csv(out_path, index=False)
+    logging.info("Predictions saved to: %s", args.out)
 
 
 if __name__ == "__main__":

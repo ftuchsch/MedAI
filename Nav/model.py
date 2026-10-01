@@ -4,10 +4,12 @@ model.py — Shared model builders and experiment configuration
 ==============================================================
 """
 
+from copy import deepcopy
+
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.cross_decomposition import PLSRegression
-from sklearn.impute import SimpleImputer
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
@@ -17,13 +19,24 @@ from xgboost import XGBClassifier
 CLINICAL_FEATURES = ["age", "sex", "baseline_egfr_23"]
 
 CV_FOLDS = 5
+CV_REPEATS = 3
 RANDOM_SEED = 42
+EARLY_STOPPING_ROUNDS = 100
+MODEL_SEED_SPACING = 101
+DEFAULT_XGB_MODEL_SEEDS = 1
 
 STARTER_XGBOOST_TOP_K = None
 SELECTED_XGBOOST_TOP_K = 90
 SELECTED_RIDGE_TOP_K = 80
 SELECTED_LDA_TOP_K = 120
 SELECTED_PLS_TOP_K = 260
+
+DEFAULT_BLEND_MODEL_NAMES = [
+    "Selected XGBoost",
+    "Selected Ridge LR",
+    "Selected Shrinkage LDA",
+    "Selected PLS LR",
+]
 
 STARTER_XGBOOST_PARAMS = {
     "n_estimators": 100,
@@ -64,6 +77,7 @@ SELECTED_PLS_PARAMS = {
     "max_iter": 5000,
 }
 
+# Legacy fallback bundle kept only for compatibility when no learned recipe exists yet.
 ENSEMBLE_COMPONENTS = [
     {
         "name": "Selected XGBoost",
@@ -92,27 +106,42 @@ BASE_MODEL_SPECS = {
     "Starter XGBoost": {
         "builder": "starter_xgboost",
         "protein_top_k": STARTER_XGBOOST_TOP_K,
+        "family": "xgboost",
         "artifact_type": "xgboost",
+        "feature_file": "starter_feature_cols.json",
+        "model_file": "starter_xgboost_model.json",
     },
     "Selected XGBoost": {
         "builder": "selected_xgboost",
         "protein_top_k": SELECTED_XGBOOST_TOP_K,
+        "family": "xgboost",
         "artifact_type": "xgboost",
+        "feature_file": "feature_cols.json",
+        "model_file": "xgboost_model.json",
     },
     "Selected Ridge LR": {
         "builder": "selected_ridge_lr",
         "protein_top_k": SELECTED_RIDGE_TOP_K,
+        "family": "sklearn",
         "artifact_type": "sklearn",
+        "feature_file": "ridge_feature_cols.json",
+        "model_file": "ridge_model.joblib",
     },
     "Selected Shrinkage LDA": {
         "builder": "selected_lda",
         "protein_top_k": SELECTED_LDA_TOP_K,
+        "family": "sklearn",
         "artifact_type": "sklearn",
+        "feature_file": "lda_feature_cols.json",
+        "model_file": "lda_model.joblib",
     },
     "Selected PLS LR": {
         "builder": "selected_pls_lr",
         "protein_top_k": SELECTED_PLS_TOP_K,
+        "family": "sklearn",
         "artifact_type": "sklearn",
+        "feature_file": "pls_feature_cols.json",
+        "model_file": "pls_model.joblib",
     },
 }
 
@@ -143,15 +172,57 @@ class PLSProjector(BaseEstimator, TransformerMixin):
         return self.model_.transform(X)
 
 
-def build_starter_xgboost(random_state: int = RANDOM_SEED):
-    return XGBClassifier(random_state=random_state, **STARTER_XGBOOST_PARAMS)
+def get_seed_list(
+    repeats: int = CV_REPEATS,
+    *,
+    base_seed: int = RANDOM_SEED,
+    spacing: int = MODEL_SEED_SPACING,
+) -> list[int]:
+    """Return deterministic seeds for repeated CV or seed averaging."""
+    return [base_seed + spacing * idx for idx in range(repeats)]
 
 
-def build_selected_xgboost(random_state: int = RANDOM_SEED):
-    return XGBClassifier(random_state=random_state, **SELECTED_XGBOOST_PARAMS)
+def get_model_spec(model_name: str) -> dict:
+    if model_name not in BASE_MODEL_SPECS:
+        raise KeyError(f"Unknown model '{model_name}'. Choose from: {sorted(BASE_MODEL_SPECS)}")
+    return BASE_MODEL_SPECS[model_name]
 
 
-def build_selected_ridge_lr(random_state: int = RANDOM_SEED):
+def build_starter_xgboost(
+    random_state: int = RANDOM_SEED,
+    *,
+    n_estimators: int | None = None,
+    early_stopping: bool = False,
+    n_jobs: int | None = None,
+):
+    params = deepcopy(STARTER_XGBOOST_PARAMS)
+    if n_estimators is not None:
+        params["n_estimators"] = int(n_estimators)
+    if n_jobs is not None:
+        params["n_jobs"] = int(n_jobs)
+    if early_stopping:
+        params["early_stopping_rounds"] = EARLY_STOPPING_ROUNDS
+    return XGBClassifier(random_state=random_state, **params)
+
+
+def build_selected_xgboost(
+    random_state: int = RANDOM_SEED,
+    *,
+    n_estimators: int | None = None,
+    early_stopping: bool = False,
+    n_jobs: int | None = None,
+):
+    params = deepcopy(SELECTED_XGBOOST_PARAMS)
+    if n_estimators is not None:
+        params["n_estimators"] = int(n_estimators)
+    if n_jobs is not None:
+        params["n_jobs"] = int(n_jobs)
+    if early_stopping:
+        params["early_stopping_rounds"] = EARLY_STOPPING_ROUNDS
+    return XGBClassifier(random_state=random_state, **params)
+
+
+def build_selected_ridge_lr(random_state: int = RANDOM_SEED, **_):
     return Pipeline(
         [
             ("imputer", SimpleImputer(strategy="median")),
@@ -161,7 +232,7 @@ def build_selected_ridge_lr(random_state: int = RANDOM_SEED):
     )
 
 
-def build_selected_lda(random_state: int = RANDOM_SEED):
+def build_selected_lda(random_state: int = RANDOM_SEED, **_):
     return Pipeline(
         [
             ("imputer", SimpleImputer(strategy="median")),
@@ -171,7 +242,7 @@ def build_selected_lda(random_state: int = RANDOM_SEED):
     )
 
 
-def build_selected_pls_lr(random_state: int = RANDOM_SEED):
+def build_selected_pls_lr(random_state: int = RANDOM_SEED, **_):
     return Pipeline(
         [
             ("imputer", SimpleImputer(strategy="median")),
@@ -189,7 +260,7 @@ def build_selected_pls_lr(random_state: int = RANDOM_SEED):
     )
 
 
-def build_model(builder_name: str, random_state: int = RANDOM_SEED):
+def build_model(builder_name: str, random_state: int = RANDOM_SEED, **kwargs):
     builders = {
         "starter_xgboost": build_starter_xgboost,
         "selected_xgboost": build_selected_xgboost,
@@ -199,14 +270,11 @@ def build_model(builder_name: str, random_state: int = RANDOM_SEED):
     }
     if builder_name not in builders:
         raise ValueError(f"Unknown builder '{builder_name}'. Choose from: {sorted(builders)}")
-    return builders[builder_name](random_state=random_state)
+    return builders[builder_name](random_state=random_state, **kwargs)
 
 
 if __name__ == "__main__":
     for label, spec in BASE_MODEL_SPECS.items():
         model = build_model(spec["builder"])
-        print(
-            f"{label:<20} builder={spec['builder']:<18} "
-            f"protein_top_k={spec['protein_top_k']}"
-        )
+        print(f"{label:<20} builder={spec['builder']:<18} protein_top_k={spec['protein_top_k']}")
         print(f"  model={type(model).__name__}")
