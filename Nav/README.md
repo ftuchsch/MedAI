@@ -22,12 +22,15 @@ Default data and artifact paths resolve relative to the scripts.
 | --- | ---: | --- |
 | `Starter XGBoost` | All proteins | Original boosted-tree baseline |
 | `Selected XGBoost` | Top 90 | Shallow regularized boosted trees |
+| `Selected Proteomics-Only XGBoost` | Top 90 | Stable protein selection, without clinical covariates |
 | `Selected Ridge LR` | Top 80 | Scaled, L2-regularized logistic regression |
 | `Selected Shrinkage LDA` | Top 120 | LDA with covariance shrinkage |
 | `Selected PLS LR` | Top 260 | 14 supervised latent components + logistic regression |
 
-All branches retain available clinical covariates. Protein selection occurs
-inside each training fold. Parameters and feature counts live in `model.py`.
+The selected XGBoost branches use stable ANOVA selection over five stratified
+subsamples within each training fold. The other branches use standard ANOVA
+ranking. Clinical covariates are retained except in the proteomics-only branch.
+Parameters and feature counts live in `model.py`.
 Repeated stratified CV produces OOF predictions for comparing individual models
 and cross-fitted convex blends. OOF log loss selects the final recipe.
 
@@ -59,7 +62,7 @@ models, feature lists, `ensemble_config.json`, and a training summary.
 Selected XGBoost is always retained for starter-interface compatibility.
 
 When a recipe is absent, training uses the historical fixed XGBoost/ridge/PLS
-blend (0.45 / 0.40 / 0.15) and logs the fallback. Inference loads
+blend (0.41 / 0.12 / 0.32 / 0.15) and logs the fallback. Inference loads
 `ensemble_config.json` when present, otherwise the single XGBoost artifact
 in `--model-dir`.
 

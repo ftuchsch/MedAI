@@ -166,7 +166,7 @@ class PipelineTests(unittest.TestCase):
             "1",
         )
         metrics = pd.read_csv(results / "cv_results.csv")
-        self.assertEqual(metrics["model"].nunique(), 5)
+        self.assertEqual(metrics["model"].nunique(), 6)
         self.run_script(
             "Nav",
             "train.py",
@@ -190,6 +190,42 @@ class PipelineTests(unittest.TestCase):
             env={"MEDAI_PYTHON": sys.executable},
         )
         self.assert_predictions(output, labeled=True)
+
+    def test_nav_proteomics_only_selection_in_evaluation_and_training(self):
+        code = """
+import sys
+import pandas as pd
+from ensemble_utils import fit_full_model_group, fit_model_on_fold
+from model import BASE_MODEL_SPECS, CLINICAL_FEATURES
+from preprocess import select_feature_columns
+
+frame = pd.read_csv(sys.argv[1])
+train, validation = frame.iloc[:40], frame.iloc[40:]
+name = 'Selected Proteomics-Only XGBoost'
+spec = dict(BASE_MODEL_SPECS[name], protein_top_k=3)
+expected = select_feature_columns(
+    train, train['ati'].to_numpy(), protein_top_k=3,
+    feature_selector='stable_anova', include_clinical=False,
+)
+fold = fit_model_on_fold(
+    model_name=name, spec=spec, df_train=train,
+    y_train=train['ati'].to_numpy(), df_val=validation,
+    y_val=validation['ati'].to_numpy(), seed=42, xgb_n_jobs=1,
+)
+final = fit_full_model_group(
+    model_name=name, spec=spec, df_train=train,
+    y_train=train['ati'].to_numpy(), recommended_n_estimators=3, xgb_n_jobs=1,
+)
+assert fold['feature_cols'] == final['feature_cols'] == expected
+assert len(expected) == 3 and not set(expected).intersection(CLINICAL_FEATURES)
+"""
+        self.run_command(
+            sys.executable,
+            "-c",
+            code,
+            self.data,
+            env={"PYTHONPATH": str(ROOT / "Nav")},
+        )
 
     def test_nav_fallback_respects_custom_model_directory(self):
         # A custom directory with no ensemble config must load its own XGBoost.

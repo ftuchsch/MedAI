@@ -36,7 +36,7 @@ formats. They remain separate so historical models can still be loaded.
 | Track | Approaches | Engineering focus |
 | --- | --- | --- |
 | [`kidney/`](kidney/README.md) | XGBoost, optional LightGBM, elastic-net logistic regression; convex blending, ridge stacking, sigmoid-calibrated stacking | Repeated stratified CV, seed averaging, clinical ablations, top-k and stability selection |
-| [`Nav/`](Nav/README.md) | Starter and selected-feature XGBoost, ridge logistic regression, shrinkage LDA, PLS + logistic regression; fixed and learned blends | Complementary model families and compact protein panels |
+| [`Nav/`](Nav/README.md) | Starter, selected-feature, and proteomics-only XGBoost, ridge logistic regression, shrinkage LDA, PLS + logistic regression; fixed and learned blends | Stable ANOVA selection, complementary model families, and compact protein panels |
 | [`Felix/kidney/`](Felix/kidney/README.md) | TabPFN v2 with top-k proteins and clinical covariates | Pretrained tabular classification after reducing the feature space |
 
 Protein ranking is fitted on each training fold. Linear pipelines fit imputation

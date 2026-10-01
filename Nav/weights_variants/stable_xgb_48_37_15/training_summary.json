@@ -1,0 +1,63 @@
+{
+  "data_path": "/Users/arnavkulkarni/Developer/medAI-hackathon/MedAI/data/train.csv",
+  "seed": 42,
+  "xgb_top_k": 90,
+  "xgb_feature_selector": "stable_anova",
+  "ridge_top_k": 80,
+  "ridge_feature_selector": "anova",
+  "lda_top_k": 120,
+  "lda_feature_selector": "anova",
+  "pls_top_k": 260,
+  "pls_feature_selector": "anova",
+  "pls_n_components": 14,
+  "ensemble_components": [
+    {
+      "name": "Selected XGBoost",
+      "weight": 0.48,
+      "artifact_type": "xgboost",
+      "feature_file": "feature_cols.json",
+      "model_file": "xgboost_model.json"
+    },
+    {
+      "name": "Selected Ridge LR",
+      "weight": 0.37,
+      "artifact_type": "sklearn",
+      "feature_file": "ridge_feature_cols.json",
+      "model_file": "ridge_model.joblib"
+    },
+    {
+      "name": "Selected PLS LR",
+      "weight": 0.15,
+      "artifact_type": "sklearn",
+      "feature_file": "pls_feature_cols.json",
+      "model_file": "pls_model.joblib"
+    }
+  ],
+  "training_metrics": [
+    {
+      "model": "Selected XGBoost",
+      "train_auc": 0.9191814159292034,
+      "train_log_loss": 0.412717167451036
+    },
+    {
+      "model": "Selected Ridge LR",
+      "train_auc": 0.8234734513274335,
+      "train_log_loss": 0.5144131008924395
+    },
+    {
+      "model": "Selected Shrinkage LDA",
+      "train_auc": 0.9263938053097346,
+      "train_log_loss": 0.35023614177282886
+    },
+    {
+      "model": "Selected PLS LR",
+      "train_auc": 0.9845132743362831,
+      "train_log_loss": 0.1603434433499371
+    },
+    {
+      "model": "Selected Ensemble (XGB + Ridge + PLS)",
+      "train_auc": 0.9424778761061947,
+      "train_log_loss": 0.3897244087010159
+    }
+  ]
+}

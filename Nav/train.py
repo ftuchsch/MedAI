@@ -24,6 +24,7 @@ from model import (
     SELECTED_LDA_TOP_K,
     SELECTED_PLS_PARAMS,
     SELECTED_PLS_TOP_K,
+    SELECTED_PROTEOMICS_ONLY_XGBOOST_TOP_K,
     SELECTED_RIDGE_TOP_K,
     SELECTED_XGBOOST_TOP_K,
 )
@@ -92,6 +93,12 @@ def parse_args():
         help=f"Number of protein features to keep for Selected Ridge LR (default: {SELECTED_RIDGE_TOP_K})",
     )
     p.add_argument(
+        "--protein-only-xgb-top-k",
+        type=int,
+        default=SELECTED_PROTEOMICS_ONLY_XGBOOST_TOP_K,
+        help="Number of proteins to keep for proteomics-only XGBoost (default: 90)",
+    )
+    p.add_argument(
         "--lda-top-k",
         type=int,
         default=SELECTED_LDA_TOP_K,
@@ -133,6 +140,7 @@ def resolve_model_spec(model_name: str, args) -> dict:
     spec = dict(BASE_MODEL_SPECS[model_name])
     top_k_overrides = {
         "Selected XGBoost": args.xgb_top_k,
+        "Selected Proteomics-Only XGBoost": args.protein_only_xgb_top_k,
         "Selected Ridge LR": args.ridge_top_k,
         "Selected Shrinkage LDA": args.lda_top_k,
         "Selected PLS LR": args.pls_top_k,
@@ -333,6 +341,14 @@ def main():
         "xgb_model_seeds": int(args.xgb_model_seeds),
         "xgb_n_jobs": args.xgb_n_jobs,
         "xgb_top_k": int(args.xgb_top_k),
+        "protein_only_xgb_top_k": int(args.protein_only_xgb_top_k),
+        "feature_selection": {
+            name: {
+                "selector": group["spec"]["feature_selector"],
+                "include_clinical": group["spec"]["include_clinical"],
+            }
+            for name, group in trained_groups.items()
+        },
         "ridge_top_k": int(args.ridge_top_k),
         "lda_top_k": int(args.lda_top_k),
         "pls_top_k": int(args.pls_top_k),

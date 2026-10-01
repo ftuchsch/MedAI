@@ -1,6 +1,6 @@
 # Findings
 
-Note: the current scripts are being moved to a repeated-CV, learned-recipe flow. The concrete `0.45 / 0.40 / 0.15` blend and related comments below are historical local findings from the earlier checked-in code, not a hard-coded truth of the updated evaluation path.
+Note: the current scripts use repeated CV and learned recipes. The fixed blends and metrics below are historical local findings; the evaluator selects a recipe from each new run.
 
 - The local dataset in `../data/train.csv` is `426 x 6597`, not the larger `1,500`-row split referenced in the research notes.
 - The target is `ati` and the hidden evaluation metric is `log loss`.
@@ -33,9 +33,14 @@ Note: the current scripts are being moved to a repeated-CV, learned-recipe flow.
 - Best single-model family so far:
   - very shallow regularized XGBoost with top-k selected proteins
 - Best repeated-CV blend so far:
-  - `45%` selected-feature XGBoost
-  - `40%` selected-feature ridge logistic regression
+  - `41%` selected-feature XGBoost
+  - `12%` proteomics-only selected-feature XGBoost
+  - `32%` selected-feature ridge logistic regression
   - `15%` selected-feature PLS logistic regression
+- The XGBoost branch got another small but real gain from stability-aware feature selection:
+  - instead of taking the top `90` proteins from one ANOVA ranking, it now repeats the ANOVA screen on `5` stratified inner subsamples
+  - proteins are kept by selection frequency first, then by full-fold ANOVA score as the tiebreak
+  - that lowered the XGBoost branch variance slightly without adding test-time complexity
 - The best XGBoost branch got better after retuning:
   - depth `1` instead of depth `2`
   - more trees (`500`)
@@ -46,6 +51,10 @@ Note: the current scripts are being moved to a repeated-CV, learned-recipe flow.
   - `14` supervised latent components
   - logistic regression with `C=0.5`
 - PLS is not good alone on log loss, but it adds useful diversity at low weight.
+- A low-weight proteomics-only tree branch now helps slightly:
+  - it uses the same stable top-`90` protein screen as the main XGBoost branch
+  - it excludes `age`, `sex`, and `baseline_egfr_23`
+  - that gives the ensemble one component that cannot lean on the clinical covariates
 - Shrinkage LDA helped earlier, but the PLS branch is now better than LDA in the final ensemble.
 - Nested calibration did not help:
   - sigmoid calibration worsened log loss
@@ -68,23 +77,32 @@ Note: the current scripts are being moved to a repeated-CV, learned-recipe flow.
 - Averaging a few XGBoost seeds helped the seed-42 run, but did not clearly beat the current baseline on repeated CV.
 - A 4-model blend that kept both LDA and PLS was worse than the cleaner `XGB + Ridge + PLS` ensemble.
 - Complementary-feature LDA panels did not beat the simpler shared top-k LDA setup.
+- Clinical-only cluster GroupKFold was a useful stress test, but it favored the older raw-XGBoost selector slightly; I am keeping that older bundle snapshotted as a rollback candidate rather than treating the cluster proxy as the primary acceptance metric.
+- CatBoost did not justify itself:
+  - standalone CatBoost branches were worse than the current XGBoost
+  - CatBoost blends were also worse than the current winner in the first narrow screen
 
 ## Best Results So Far
 
 - Best single-fold-compatible model:
   - `Selected XGBoost`
   - top `90` proteins + 3 clinical features
-  - latest official `evaluate.py` seed-42 5-fold log loss: `0.560`
+  - feature selector: repeated stable ANOVA screen over `5` inner subsamples
+  - latest official `evaluate.py` seed-42 5-fold log loss: `0.557`
 - Best repeated-CV model overall:
-  - `Selected Ensemble (XGB + Ridge + PLS)` with:
-    - XGBoost on top `90` proteins
+  - `Selected Ensemble (XGB + ProtXGB + Ridge + PLS)` with:
+    - stability-selected XGBoost on top `90` proteins + clinical covariates
+    - proteomics-only stability-selected XGBoost on top `90` proteins
     - ridge LR on top `80` proteins
     - PLS logistic regression on top `260` proteins compressed to `14` latent components
-    - blend weights `0.45 / 0.40 / 0.15`
-  - repeated 5-seed CV mean log loss: about `0.5547`
-  - repeated 5-seed CV mean AUC: about `0.7865`
-  - latest official `evaluate.py` seed-42 5-fold log loss: `0.547`
-  - latest official `evaluate.py` seed-42 5-fold AUC: `0.795`
+    - blend weights `0.41 / 0.12 / 0.32 / 0.15`
+  - repeated 5-seed CV mean log loss: about `0.5535`
+  - repeated 5-seed CV mean AUC: about `0.7876`
+  - latest official `evaluate.py` seed-42 5-fold log loss: `0.544`
+  - latest official `evaluate.py` seed-42 5-fold AUC: `0.799`
+- Best public leaderboard result so far:
+  - Team 2 is currently `3rd`
+  - public log loss: `0.413325`
 
 ## Important Constraint
 

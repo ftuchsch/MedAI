@@ -60,6 +60,8 @@ def fit_model_on_fold(
         df_train,
         y_train,
         protein_top_k=spec["protein_top_k"],
+        feature_selector=spec.get("feature_selector", "anova"),
+        include_clinical=spec.get("include_clinical", True),
     )
     X_train = build_feature_frame(df_train, feature_cols)
     X_val = build_feature_frame(df_val, feature_cols)
@@ -124,6 +126,8 @@ def fit_full_model_group(
         df_train,
         y_train,
         protein_top_k=spec["protein_top_k"],
+        feature_selector=spec.get("feature_selector", "anova"),
+        include_clinical=spec.get("include_clinical", True),
     )
     X_train = build_feature_frame(df_train, feature_cols)
 
